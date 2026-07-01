@@ -31,15 +31,12 @@
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
-            <TextView
+            <ImageView
                 android:id="@+id/course_icon"
                 android:layout_width="18dp"
-                android:layout_height="wrap_content"
-                android:gravity="center"
-                android:text="课"
-                android:textColor="@color/widget_accent"
-                android:textSize="12sp"
-                android:textStyle="bold" />
+                android:layout_height="18dp"
+                android:contentDescription="@null"
+                android:scaleType="centerInside" />
 
             <TextView
                 android:id="@+id/course_name"
