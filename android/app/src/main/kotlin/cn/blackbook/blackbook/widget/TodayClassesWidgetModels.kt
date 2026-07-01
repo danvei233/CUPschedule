@@ -152,54 +152,52 @@ object TodayClassesRepository {
         includeActiveWindow: Boolean = false,
     ): ClassReminderData? {
         val preferences = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
-        val schedules = storedSchedules(preferences)
+        val schedule = storedSchedules(preferences).firstOrNull() ?: return null
         val now = LocalDateTime.of(nowDate, nowTime)
         val activeWindowStart = now.minusMinutes(6)
         var best: ClassReminderData? = null
-        for (schedule in schedules) {
-            val semester = schedule.semester
-            for (dayOffset in 0..420) {
-                val date = nowDate.plusDays(dayOffset.toLong())
-                if (date.isBefore(semester.startDate)) {
+        val semester = schedule.semester
+        for (dayOffset in 0..420) {
+            val date = nowDate.plusDays(dayOffset.toLong())
+            if (date.isBefore(semester.startDate)) {
+                continue
+            }
+            if (date.isAfter(semester.endDate)) {
+                break
+            }
+            val weekIndex = semester.weekIndexFor(date)
+            val weekday = semester.weekdayFor(date)
+            val courses = resolveConflicts(
+                courses = schedule.courses.filter { course ->
+                    course.weekday == weekday &&
+                        course.weekIndexes.contains(weekIndex)
+                },
+                choices = schedule.choices,
+                weekIndex = weekIndex,
+            ).sortedWith(compareBy<WidgetCourse> { it.startTime }.thenBy { it.startUnit })
+            for (course in courses) {
+                val reminder = ClassReminderData(
+                    semesterName = semester.name,
+                    weekIndex = weekIndex,
+                    classDate = date,
+                    course = course,
+                )
+                val relevant = if (includeActiveWindow) {
+                    reminder.reminderAt.isAfter(activeWindowStart) &&
+                        !reminder.reminderAt.isAfter(now) &&
+                        reminder.classStart.isAfter(now)
+                } else {
+                    reminder.reminderAt.isAfter(now)
+                }
+                if (!relevant) {
                     continue
                 }
-                if (date.isAfter(semester.endDate)) {
-                    break
+                if (best == null || reminder.classStart.isBefore(best.classStart)) {
+                    best = reminder
                 }
-                val weekIndex = semester.weekIndexFor(date)
-                val weekday = semester.weekdayFor(date)
-                val courses = resolveConflicts(
-                    courses = schedule.courses.filter { course ->
-                        course.weekday == weekday &&
-                            course.weekIndexes.contains(weekIndex)
-                    },
-                    choices = schedule.choices,
-                    weekIndex = weekIndex,
-                ).sortedWith(compareBy<WidgetCourse> { it.startTime }.thenBy { it.startUnit })
-                for (course in courses) {
-                    val reminder = ClassReminderData(
-                        semesterName = semester.name,
-                        weekIndex = weekIndex,
-                        classDate = date,
-                        course = course,
-                    )
-                    val relevant = if (includeActiveWindow) {
-                        reminder.reminderAt.isAfter(activeWindowStart) &&
-                            !reminder.reminderAt.isAfter(now) &&
-                            reminder.classStart.isAfter(now)
-                    } else {
-                        reminder.reminderAt.isAfter(now)
-                    }
-                    if (!relevant) {
-                        continue
-                    }
-                    if (best == null || reminder.classStart.isBefore(best.classStart)) {
-                        best = reminder
-                    }
-                }
-                if (best != null && date.isAfter(best.classDate.plusDays(1))) {
-                    break
-                }
+            }
+            if (best != null && date.isAfter(best.classDate.plusDays(1))) {
+                break
             }
         }
         return best
@@ -212,24 +210,28 @@ object TodayClassesRepository {
         fixedMode: Boolean,
     ): TodayWidgetData {
         val preferences = context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE)
-        for (schedule in storedSchedules(preferences)) {
+        val schedule = storedSchedules(preferences).firstOrNull()
+        if (schedule != null) {
             val semester = schedule.semester
-            if (targetDate.isBefore(semester.startDate) || targetDate.isAfter(semester.endDate)) {
-                continue
-            }
+            val inSemester = !targetDate.isBefore(semester.startDate) &&
+                !targetDate.isAfter(semester.endDate)
             val weekIndex = semester.weekIndexFor(targetDate)
             val weekday = semester.weekdayFor(targetDate)
-            val courses = resolveConflicts(
-                courses = schedule.courses
-                    .filter { course ->
-                        course.weekday == weekday &&
-                            course.weekIndexes.contains(weekIndex) &&
-                            course.endTime.isAfter(referenceTime)
-                    },
-                choices = schedule.choices,
-                weekIndex = weekIndex,
-            )
-                .sortedWith(compareBy<WidgetCourse> { it.startTime }.thenBy { it.startUnit })
+            val courses = if (inSemester) {
+                resolveConflicts(
+                    courses = schedule.courses
+                        .filter { course ->
+                            course.weekday == weekday &&
+                                course.weekIndexes.contains(weekIndex) &&
+                                course.endTime.isAfter(referenceTime)
+                        },
+                    choices = schedule.choices,
+                    weekIndex = weekIndex,
+                )
+                    .sortedWith(compareBy<WidgetCourse> { it.startTime }.thenBy { it.startUnit })
+            } else {
+                emptyList()
+            }
             return TodayWidgetData(
                 semesterName = semester.name,
                 weekIndex = weekIndex,
@@ -266,8 +268,8 @@ object TodayClassesRepository {
     private fun storedSchedules(
         preferences: android.content.SharedPreferences,
     ): List<StoredSchedule> {
-        val selectedId = readInt(preferences, prefKey(selectedSemesterIdKey))
-        val ids = readStringList(preferences, prefKey(semesterIdsKey))
+        val selectedId = readIntPreference(preferences, selectedSemesterIdKey)
+        val ids = readStringListPreference(preferences, semesterIdsKey)
         val candidateIds = buildList {
             if (selectedId != null) add(selectedId.toString())
             addAll(ids)
@@ -275,13 +277,13 @@ object TodayClassesRepository {
         return buildList {
             for (rawId in candidateIds) {
                 val id = rawId.toIntOrNull() ?: continue
-                val semesterText = preferences.getString(prefKey("$semesterPrefix$id"), null)
+                val semesterText = readStringPreference(preferences, "$semesterPrefix$id")
                     ?: continue
-                val printDataText = preferences.getString(prefKey("$printDataPrefix$id"), null)
+                val printDataText = readStringPreference(preferences, "$printDataPrefix$id")
                     ?: continue
                 val semester = parseSemester(
                     semesterText,
-                    preferences.getString(prefKey("$startDateOverridePrefix$id"), null),
+                    readStringPreference(preferences, "$startDateOverridePrefix$id"),
                 ) ?: continue
                 add(
                     StoredSchedule(
@@ -325,6 +327,24 @@ object TodayClassesRepository {
     }
 
     private fun prefKey(key: String): String = "$keyPrefix$key"
+
+    private fun readIntPreference(
+        preferences: android.content.SharedPreferences,
+        key: String,
+    ): Int? {
+        return readInt(preferences, key) ?: readInt(preferences, prefKey(key))
+    }
+
+    private fun readStringListPreference(
+        preferences: android.content.SharedPreferences,
+        key: String,
+    ): List<String> {
+        val raw = readStringList(preferences, key)
+        if (raw.isNotEmpty()) {
+            return raw
+        }
+        return readStringList(preferences, prefKey(key))
+    }
 
     private fun readStringPreference(
         preferences: android.content.SharedPreferences,
@@ -521,10 +541,14 @@ object TodayClassesRepository {
         preferences: android.content.SharedPreferences,
         semesterId: Int,
     ): Map<String, String> {
-        val prefix = prefKey("$conflictChoicePrefix$semesterId.")
+        val prefixes = listOf(
+            "$conflictChoicePrefix$semesterId.",
+            prefKey("$conflictChoicePrefix$semesterId."),
+        )
         val result = mutableMapOf<String, String>()
         for ((key, value) in preferences.all) {
-            if (!key.startsWith(prefix) || value !is String || value.isBlank()) {
+            val prefix = prefixes.firstOrNull { key.startsWith(it) }
+            if (prefix == null || value !is String || value.isBlank()) {
                 continue
             }
             result[key.substring(prefix.length)] = value

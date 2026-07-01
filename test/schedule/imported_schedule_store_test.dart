@@ -6,6 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test(
     'saves different semesters independently and selects latest import',
     () async {
@@ -142,6 +144,26 @@ void main() {
       expect(await store.fingerprintForSemester(191), isNot(sourceFingerprint));
     },
   );
+
+  test('generates unused negative local semester ids', () async {
+    SharedPreferences.setMockInitialValues({});
+    final store = ImportedScheduleStore();
+
+    await store.save(
+      semesterJson: _semesterJson(
+        id: 191,
+        name: '2025-2026-2',
+        startDate: '2026-03-09',
+        endDate: '2026-06-28',
+      ),
+      printDataJson: _printDataJson(semesterId: 191),
+      selectAfterSave: true,
+    );
+
+    final id = await store.nextLocalSemesterId();
+    expect(id, isNegative);
+    expect(await store.containsSemester(id), isFalse);
+  });
 }
 
 Map<String, dynamic> _semesterJson({

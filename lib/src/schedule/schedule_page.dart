@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../account/account_center_dialog.dart';
 import '../account/cup_account_service.dart';
@@ -36,7 +37,7 @@ Color _accentForegroundFor(BuildContext context, _CourseAccent accent) {
 class SchedulePage extends StatefulWidget {
   const SchedulePage({
     super.key,
-    this.repository = const AssetScheduleRepository(),
+    this.repository = const CupScheduleRepository(),
   });
 
   final ScheduleRepository repository;
@@ -1924,19 +1925,24 @@ class _DockScheduleList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 22,
-      runSpacing: 14,
-      children: [
-        for (final bundle in schedules)
-          _DockScheduleTile(
-            bundle: bundle,
-            selected: bundle.semester.id == currentSemesterId,
-            onTap: bundle.semester.id == currentSemesterId
-                ? null
-                : () => onSwitch(bundle),
-          ),
-      ],
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      physics: const BouncingScrollPhysics(),
+      clipBehavior: Clip.none,
+      child: Row(
+        children: [
+          for (var index = 0; index < schedules.length; index++) ...[
+            _DockScheduleTile(
+              bundle: schedules[index],
+              selected: schedules[index].semester.id == currentSemesterId,
+              onTap: schedules[index].semester.id == currentSemesterId
+                  ? null
+                  : () => onSwitch(schedules[index]),
+            ),
+            if (index != schedules.length - 1) const SizedBox(width: 22),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -2065,6 +2071,10 @@ class _DockAction extends StatelessWidget {
 class _AboutDockSheet extends StatelessWidget {
   const _AboutDockSheet();
 
+  static final Uri _githubProfileUrl = Uri.parse(
+    'https://github.com/danvei233',
+  );
+
   @override
   Widget build(BuildContext context) {
     final palette = blackbookPalette(context);
@@ -2128,7 +2138,11 @@ class _AboutDockSheet extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 14),
-                  _AboutInfoLine(label: '作者', value: 'github@danvei233'),
+                  _AboutInfoLine(
+                    label: '作者',
+                    value: 'danvei233@github',
+                    onTap: () => _openGithubProfile(context),
+                  ),
                   const SizedBox(height: 8),
                   _AboutInfoLine(label: '开发者', value: '24届学生丁薇（化名）'),
                   const SizedBox(height: 8),
@@ -2153,6 +2167,17 @@ class _AboutDockSheet extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _openGithubProfile(BuildContext context) async {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final opened = await launchUrl(
+      _githubProfileUrl,
+      mode: LaunchMode.externalApplication,
+    );
+    if (!opened) {
+      messenger?.showSnackBar(const SnackBar(content: Text('无法打开 GitHub 主页')));
+    }
   }
 }
 
@@ -2182,10 +2207,11 @@ class _AboutLogo extends StatelessWidget {
 }
 
 class _AboutInfoLine extends StatelessWidget {
-  const _AboutInfoLine({required this.label, required this.value});
+  const _AboutInfoLine({required this.label, required this.value, this.onTap});
 
   final String label;
   final String value;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -2206,13 +2232,20 @@ class _AboutInfoLine extends StatelessWidget {
           ),
         ),
         Expanded(
-          child: Text(
-            value,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-              color: palette.ink,
-              fontSize: 13,
-              fontWeight: FontWeight.w700,
-              height: 1.25,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onTap,
+            child: Text(
+              value,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: onTap == null ? palette.ink : palette.primary,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                height: 1.25,
+                decoration: onTap == null ? null : TextDecoration.underline,
+                decorationColor: palette.primary,
+                decorationThickness: 1.4,
+              ),
             ),
           ),
         ),

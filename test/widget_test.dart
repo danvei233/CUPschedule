@@ -247,6 +247,63 @@ void main() {
     expect(find.textContaining('未来学期课程'), findsOneWidget);
   });
 
+  testWidgets('scrolls schedule choices horizontally in the more dock', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final store = ImportedScheduleStore();
+    for (var index = 0; index < 8; index++) {
+      final startYear = 2026 + index;
+      await store.save(
+        semesterJson: _semesterJson(
+          id: 230 + index,
+          name: '$startYear-${startYear + 1}-1',
+          startDate: '$startYear-09-07',
+          endDate: '${startYear + 1}-01-17',
+        ),
+        printDataJson: _printDataJson(
+          semesterId: 230 + index,
+          courseName: '横滑课表$index',
+          weekIndexes: const [16],
+        ),
+        selectAfterSave: false,
+      );
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(home: SchedulePage(repository: _MemoryScheduleRepository())),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pumpAndSettle();
+
+    final horizontalScroll = find.byWidgetPredicate(
+      (widget) =>
+          widget is SingleChildScrollView &&
+          widget.scrollDirection == Axis.horizontal,
+    );
+    expect(horizontalScroll, findsOneWidget);
+
+    final labels = [
+      for (var startYear = 2033; startYear >= 2026; startYear--)
+        '${startYear.toString().substring(2)}-'
+            '${(startYear + 1).toString().substring(2)}-1',
+    ];
+    final rowTop = tester.getTopLeft(find.text(labels.first)).dy;
+    for (final label in labels.skip(1)) {
+      expect(tester.getTopLeft(find.text(label)).dy, rowTop);
+    }
+
+    final oldestSchedule = find.text('26-27-1');
+    final beforeDragLeft = tester.getTopLeft(oldestSchedule).dx;
+    await tester.drag(horizontalScroll, const Offset(-420, 0));
+    await tester.pumpAndSettle();
+
+    expect(tester.getTopLeft(oldestSchedule).dx, lessThan(beforeDragLeft));
+  });
+
   testWidgets('keeps selected week after adding a course', (tester) async {
     SharedPreferences.setMockInitialValues({});
     await tester.pumpWidget(

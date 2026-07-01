@@ -39,14 +39,23 @@ class TodayClassesRemoteViewsFactory(
         courses = emptyList()
     }
 
-    override fun getCount(): Int = courses.size
+    override fun getCount(): Int = if (courses.isEmpty()) 0 else courses.size + 1
 
     override fun getViewAt(position: Int): RemoteViews {
         val course = courses.getOrNull(position)
+        if (course == null) {
+            val views = RemoteViews(context.packageName, R.layout.widget_today_click_spacer)
+            val fillInIntent = Intent().apply {
+                action = "cn.blackbook.blackbook.action.OPEN_WIDGET"
+                data = Uri.parse("blackbook://widget/open")
+            }
+            views.setOnClickFillInIntent(R.id.widget_click_spacer_root, fillInIntent)
+            return views
+        }
         val theme = WidgetTheme.colors(context)
         val views = RemoteViews(context.packageName, R.layout.widget_today_class_item)
-        val colorAccent = course?.colorAccent() ?: CourseAccent.fallback
-        val iconAccent = course?.iconAccent() ?: colorAccent
+        val colorAccent = course.colorAccent()
+        val iconAccent = course.iconAccent()
         views.setInt(
             R.id.widget_course_item_root,
             "setBackgroundResource",
@@ -63,23 +72,21 @@ class TodayClassesRemoteViewsFactory(
         views.setTextColor(R.id.course_name, theme.foreground)
         views.setTextColor(R.id.course_place, theme.muted)
         views.setInt(R.id.course_accent_bar, "setBackgroundColor", colorAccent.color)
-        if (course != null) {
-            views.setTextViewText(R.id.course_name, course.name)
-            views.setTextViewText(R.id.course_place, course.compactSubtitle)
-            val fillInIntent = Intent().apply {
-                action = "cn.blackbook.blackbook.action.OPEN_WIDGET_COURSE"
-                data = Uri.parse("blackbook://widget/course/$position")
-                putExtra("course_name", course.name)
-                putExtra("course_subtitle", course.compactSubtitle)
-            }
-            views.setOnClickFillInIntent(R.id.widget_course_item_root, fillInIntent)
+        views.setTextViewText(R.id.course_name, course.name)
+        views.setTextViewText(R.id.course_place, course.compactSubtitle)
+        val fillInIntent = Intent().apply {
+            action = "cn.blackbook.blackbook.action.OPEN_WIDGET_COURSE"
+            data = Uri.parse("blackbook://widget/course/$position")
+            putExtra("course_name", course.name)
+            putExtra("course_subtitle", course.compactSubtitle)
         }
+        views.setOnClickFillInIntent(R.id.widget_course_item_root, fillInIntent)
         return views
     }
 
     override fun getLoadingView(): RemoteViews? = null
 
-    override fun getViewTypeCount(): Int = 1
+    override fun getViewTypeCount(): Int = 2
 
     override fun getItemId(position: Int): Long = position.toLong()
 

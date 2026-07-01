@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../account/cup_account_service.dart';
+import '../account/cup_api_client.dart';
 import '../common/stable_fingerprint.dart';
 import 'schedule_models.dart';
 
@@ -107,37 +109,79 @@ abstract class ScheduleRepository {
   Future<ScheduleBundle> load();
 }
 
-class AssetScheduleRepository implements ScheduleRepository {
-  const AssetScheduleRepository({
-    this.semesterAsset = 'assets/sample_data/cup_semester_191.json',
-    this.scheduleAsset =
-        'assets/sample_data/cup_course_table_print_data_191.json',
+class CupScheduleRepository implements ScheduleRepository {
+  const CupScheduleRepository({
+    this.store = const ImportedScheduleStore(),
+    this.accountService = const CupAccountService(),
   });
 
-  final String semesterAsset;
-  final String scheduleAsset;
+  final ImportedScheduleStore store;
+  final CupAccountService accountService;
 
   @override
   Future<ScheduleBundle> load() async {
-    final imported = await ImportedScheduleStore().load();
+    final imported = await store.load();
     if (imported != null) {
       unawaited(ScheduleWidgetBridge.refreshTodayClassesAndReminders());
       return imported;
     }
 
-    final semesterText = await rootBundle.loadString(semesterAsset);
-    final scheduleText = await rootBundle.loadString(scheduleAsset);
-    final semesterJson = jsonDecode(semesterText) as Map<String, dynamic>;
-    final scheduleJson = jsonDecode(scheduleText) as Map<String, dynamic>;
+    return _importDefaultCupSchedule(store);
+  }
 
-    return ScheduleBundle.fromCupJson(
-      semesterJson: semesterJson,
-      printDataJson: scheduleJson,
-    );
+  Future<ScheduleBundle> _importDefaultCupSchedule(
+    ImportedScheduleStore store,
+  ) async {
+    CupApiClient? client;
+    try {
+      final lease = await accountService.acquireSession();
+      client = lease.client;
+      final semester = _defaultSemester(lease.session);
+      if (semester == null) {
+        throw StateError('教务系统没有可导入的学期');
+      }
+      final payload = await client.fetchSchedule(lease.session, semester);
+      return store.save(
+        semesterJson: payload.semesterJson,
+        printDataJson: payload.printDataJson,
+        selectAfterSave: true,
+        updateSourceFingerprint: true,
+      );
+    } on Object catch (error) {
+      final message = error
+          .toString()
+          .replaceFirst('Bad state: ', '')
+          .replaceFirst('Exception: ', '');
+      throw StateError('首次课表导入失败：$message');
+    } finally {
+      client?.close();
+    }
+  }
+
+  CupSemesterOption? _defaultSemester(CupCourseTableSession session) {
+    final currentSemesterId = session.currentSemesterId;
+    if (currentSemesterId != null) {
+      for (final semester in session.semesters) {
+        if (semester.id == currentSemesterId) {
+          return semester;
+        }
+      }
+    }
+
+    final today = DateTime.now();
+    for (final semester in session.semesters) {
+      if (!today.isBefore(semester.startDate) &&
+          !today.isAfter(semester.endDate)) {
+        return semester;
+      }
+    }
+    return session.semesters.isEmpty ? null : session.semesters.first;
   }
 }
 
 class ImportedScheduleStore {
+  const ImportedScheduleStore();
+
   static const _semesterIdsKey = 'cup.imported.semester.ids';
   static const _selectedSemesterIdKey = 'cup.imported.selected_semester_id';
   static const _semesterPrefix = 'cup.imported.semester.';
@@ -232,6 +276,18 @@ class ImportedScheduleStore {
   Future<int?> selectedSemesterId() async {
     final preferences = await SharedPreferences.getInstance();
     return preferences.getInt(_selectedSemesterIdKey);
+  }
+
+  Future<int> nextLocalSemesterId() async {
+    final preferences = await SharedPreferences.getInstance();
+    await _migrateLegacyIfNeeded(preferences);
+    final ids = preferences.getStringList(_semesterIdsKey) ?? const [];
+    var candidate = -DateTime.now().microsecondsSinceEpoch;
+    while (ids.contains(candidate.toString()) ||
+        _loadBundle(preferences, candidate) != null) {
+      candidate--;
+    }
+    return candidate;
   }
 
   Future<void> setSemesterStartDate(int semesterId, DateTime startDate) async {
@@ -709,9 +765,7 @@ class ScheduleWidgetBridge {
 
   static Future<void> setThemePreference(String preference) async {
     final payload = await _buildTodayWidgetPayload();
-    final arguments = <String, Object?>{
-      'preference': preference,
-    };
+    final arguments = <String, Object?>{'preference': preference};
     if (payload != null) {
       arguments['payload'] = payload;
     }
@@ -807,16 +861,20 @@ class ScheduleWidgetBridge {
       final weekIndex = semester.weekIndexFor(referenceDate);
       final weekday = referenceDate.weekday;
       final referenceMinutes = referenceTime.hour * 60 + referenceTime.minute;
-      final courses =
-          bundle.schedule.activities
-              .where(
-                (activity) =>
-                    activity.weekday == weekday &&
-                    activity.weekIndexes.contains(weekIndex) &&
-                    _clockMinutes(activity.endTime) > referenceMinutes,
-              )
-              .toList()
-            ..sort(CourseActivity.compareByTime);
+      final dateInSemester =
+          !referenceDate.isBefore(semester.startDate) &&
+          !referenceDate.isAfter(semester.endDate);
+      final courses = dateInSemester
+          ? (bundle.schedule.activities
+                .where(
+                  (activity) =>
+                      activity.weekday == weekday &&
+                      activity.weekIndexes.contains(weekIndex) &&
+                      _clockMinutes(activity.endTime) > referenceMinutes,
+                )
+                .toList()
+              ..sort(CourseActivity.compareByTime))
+          : <CourseActivity>[];
       return <String, Object?>{
         'title': '今日课程',
         'subtitle':

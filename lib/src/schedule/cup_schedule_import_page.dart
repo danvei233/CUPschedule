@@ -181,16 +181,16 @@ class _CupScheduleImportPageState extends State<CupScheduleImportPage> {
     if (payload == null || _saving) {
       return;
     }
-    final importedSchedules = await _scheduleStore.loadAll();
-    final exists = importedSchedules.any(
-      (bundle) => bundle.semester.id == payload.semester.id,
-    );
+    final selected = await _scheduleStore.loadSelected();
+    final shouldOverwriteSelected =
+        (selected?.semester.sourceSemesterId ?? selected?.semester.id) ==
+        payload.semester.id;
     if (!mounted) {
       return;
     }
-    if (exists) {
+    if (shouldOverwriteSelected && selected != null) {
       final existingFingerprint = await _scheduleStore.fingerprintForSemester(
-        payload.semester.id,
+        selected.semester.id,
       );
       final incomingFingerprint = schedulePayloadFingerprint(
         semesterJson: payload.semesterJson,
@@ -230,8 +230,21 @@ class _CupScheduleImportPageState extends State<CupScheduleImportPage> {
       _saving = true;
     });
     try {
+      final semesterJson = shouldOverwriteSelected && selected != null
+          ? <String, dynamic>{
+              ...payload.semesterJson,
+              'id': selected.semester.id,
+              'nameZh': selected.semester.name,
+              'name': selected.semester.name,
+              'sourceSemesterId': payload.semester.id,
+            }
+          : <String, dynamic>{
+              ...payload.semesterJson,
+              'id': await _scheduleStore.nextLocalSemesterId(),
+              'sourceSemesterId': payload.semester.id,
+            };
       final bundle = await _scheduleStore.save(
-        semesterJson: payload.semesterJson,
+        semesterJson: semesterJson,
         printDataJson: payload.printDataJson,
         selectAfterSave: true,
       );
