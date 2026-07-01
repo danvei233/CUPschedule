@@ -12,14 +12,28 @@
             buildForProfiling = "YES"
             buildForArchiving = "YES"
             buildForAnalyzing = "YES">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "97C146ED1CF9000F007C117D"
-               BuildableName = "Runner.app"
-               BlueprintName = "Runner"
-               ReferencedContainer = "container:Runner.xcodeproj">
-            </BuildableReference>
-         </BuildActionEntry>
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "97C146ED1CF9000F007C117D"
+            BuildableName = "Runner.app"
+            BlueprintName = "Runner"
+            ReferencedContainer = "container:Runner.xcodeproj">
+         </BuildableReference>
+      </BuildActionEntry>
+      <BuildActionEntry
+         buildForTesting = "NO"
+         buildForRunning = "YES"
+         buildForProfiling = "YES"
+         buildForArchiving = "YES"
+         buildForAnalyzing = "YES">
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "BB1000010000000000000030"
+            BuildableName = "TodayClassesWidget.appex"
+            BlueprintName = "TodayClassesWidget"
+            ReferencedContainer = "container:Runner.xcodeproj">
+         </BuildableReference>
+      </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction

@@ -1,0 +1,209 @@
+name: Release Builds
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FLUTTER_VERSION: "3.38.9"
+  FLUTTER_STORAGE_BASE_URL: "https://storage.flutter-io.cn"
+  PUB_HOSTED_URL: "https://pub.flutter-io.cn"
+  OHOS_FLUTTER_GIT: "https://gitee.com/openharmony-sig/flutter_flutter.git"
+  OHOS_FLUTTER_REF: "master"
+
+jobs:
+  android:
+    name: Android APKs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Build Android APKs
+        run: |
+          flutter pub get
+          flutter build apk --release --split-per-abi
+          flutter build apk --release
+          flutter build appbundle --release
+          mkdir -p dist/android
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/android/stone-schedule-android-arm64-v8a.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk dist/android/stone-schedule-android-armeabi-v7a.apk
+          cp build/app/outputs/flutter-apk/app-x86_64-release.apk dist/android/stone-schedule-android-x86_64.apk
+          cp build/app/outputs/flutter-apk/app-release.apk dist/android/stone-schedule-android-universal.apk
+          cp build/app/outputs/bundle/release/app-release.aab dist/android/stone-schedule-android-release.aab
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apks
+          path: dist/android/*
+
+      - name: Attach Android APKs to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/android/*
+
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Enable Windows and build
+        shell: pwsh
+        run: |
+          flutter config --enable-windows-desktop
+          flutter pub get
+          flutter build windows --release
+          New-Item -ItemType Directory -Force -Path dist/windows | Out-Null
+          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath dist/windows/stone-schedule-windows-x64.zip -Force
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: dist/windows/*
+
+      - name: Attach Windows package to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/windows/*
+
+  ios:
+    name: iOS unsigned archive
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Build iOS app without codesign
+        run: |
+          flutter pub get
+          if flutter build ios --help | grep -q -- "--config-only"; then
+            flutter build ios --release --no-codesign --config-only
+          else
+            flutter build ios --release --no-codesign
+          fi
+          xcodebuild \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath build/ios/archive/Runner.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            archive
+          mkdir -p dist/ios
+          (cd build/ios/archive/Runner.xcarchive/Products/Applications && zip -qry ../../../../../dist/ios/stone-schedule-ios-unsigned-app.zip Runner.app)
+
+      - name: Upload iOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-unsigned
+          path: dist/ios/*
+
+      - name: Attach iOS package to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ios/*
+
+  harmonyos:
+    name: HarmonyOS/OpenHarmony HAP
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare output
+        run: mkdir -p dist/harmonyos
+
+      - name: Build HAP when ohos project exists
+        shell: bash
+        env:
+          OHOS_SDK_ARCHIVE_URL: ${{ secrets.OHOS_SDK_ARCHIVE_URL }}
+        run: |
+          set -euo pipefail
+          if [ ! -d "ohos" ]; then
+            cat > dist/harmonyos/README.txt <<'EOF'
+HarmonyOS/OpenHarmony build skipped.
+
+This repository does not contain an ohos/ project yet. Add the
+OpenHarmony Flutter project files and configure OHOS SDK/toolchain,
+then replace this CI step with:
+
+  flutter build hap --release --target-platform ohos-arm64
+EOF
+            exit 0
+          fi
+
+          if [ -n "${OHOS_SDK_ARCHIVE_URL}" ]; then
+            mkdir -p "${RUNNER_TEMP}/ohos-sdk"
+            curl -L "${OHOS_SDK_ARCHIVE_URL}" -o "${RUNNER_TEMP}/ohos-sdk.zip"
+            unzip -q "${RUNNER_TEMP}/ohos-sdk.zip" -d "${RUNNER_TEMP}/ohos-sdk"
+            export OHOS_SDK_HOME="${RUNNER_TEMP}/ohos-sdk"
+            export DEVECO_SDK_HOME="${RUNNER_TEMP}/ohos-sdk"
+          fi
+
+          if [ -z "${OHOS_SDK_HOME:-}" ] && [ -z "${DEVECO_SDK_HOME:-}" ]; then
+            cat > dist/harmonyos/README.txt <<'EOF'
+HarmonyOS/OpenHarmony build skipped.
+
+The ohos/ project exists, but OHOS SDK is not configured. Set
+OHOS_SDK_HOME or DEVECO_SDK_HOME on the runner, or provide a
+repository secret named OHOS_SDK_ARCHIVE_URL that points to a
+downloadable SDK archive.
+EOF
+            exit 0
+          fi
+
+          git clone --depth 1 --branch "${OHOS_FLUTTER_REF}" "${OHOS_FLUTTER_GIT}" "${RUNNER_TEMP}/ohos_flutter"
+          export PATH="${RUNNER_TEMP}/ohos_flutter/bin:${PATH}"
+
+          if ! flutter build hap --help >/dev/null 2>&1; then
+            cat > dist/harmonyos/README.txt <<'EOF'
+HarmonyOS/OpenHarmony build skipped.
+
+The configured OpenHarmony Flutter SDK does not provide
+`flutter build hap`. Check OHOS_FLUTTER_GIT and OHOS_FLUTTER_REF.
+EOF
+            exit 0
+          fi
+
+          flutter pub get
+          flutter build hap --release --target-platform ohos-arm64
+          find build -name '*.hap' -exec cp {} dist/harmonyos/ \;
+
+      - name: Upload HarmonyOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: harmonyos-hap
+          path: dist/harmonyos/*
+
+      - name: Attach HarmonyOS package to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/harmonyos/*

@@ -1,0 +1,11 @@
+{
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "Stone Schedule entry module.",
+  "main": "",
+  "author": "danvei233",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "shared_preferences_ohos": "file:../har/shared_preferences_ohos.har"
+  }
+}

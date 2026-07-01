@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.net.Uri
 import android.widget.RemoteViews
 import android.widget.RemoteViewsService
 import cn.blackbook.blackbook.R
@@ -65,6 +66,13 @@ class TodayClassesRemoteViewsFactory(
         if (course != null) {
             views.setTextViewText(R.id.course_name, course.name)
             views.setTextViewText(R.id.course_place, course.compactSubtitle)
+            val fillInIntent = Intent().apply {
+                action = "cn.blackbook.blackbook.action.OPEN_WIDGET_COURSE"
+                data = Uri.parse("blackbook://widget/course/$position")
+                putExtra("course_name", course.name)
+                putExtra("course_subtitle", course.compactSubtitle)
+            }
+            views.setOnClickFillInIntent(R.id.widget_course_item_root, fillInIntent)
         }
         return views
     }

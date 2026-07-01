@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "石大课表入口模块"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "石大课表"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "石大课表"
+    },
+    {
+      "name": "TodayScheduleFormAbility_label",
+      "value": "今日课程"
+    },
+    {
+      "name": "TodayScheduleFormAbility_desc",
+      "value": "显示今天剩余课程"
+    }
+  ]
+}

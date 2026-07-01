@@ -1,0 +1,16 @@
+{
+  "string": [
+    {
+      "name": "EntryAbility_label",
+      "value": "Stone Schedule"
+    },
+    {
+      "name": "TodayScheduleFormAbility_label",
+      "value": "Today Classes"
+    },
+    {
+      "name": "TodayScheduleFormAbility_desc",
+      "value": "Show remaining classes today"
+    }
+  ]
+}

@@ -38,6 +38,18 @@ dependencies:
   http: ^1.6.0
   gm_crypto: ^1.0.0
 
+dependency_overrides:
+  shared_preferences:
+    git:
+      url: https://gitee.com/openharmony-sig/flutter_packages.git
+      path: packages/shared_preferences/shared_preferences
+      ref: br_shared_preferences-v2.3.2_ohos
+  shared_preferences_ohos:
+    git:
+      url: https://gitee.com/openharmony-sig/flutter_packages.git
+      path: packages/shared_preferences/shared_preferences_ohos
+      ref: br_shared_preferences-v2.3.2_ohos
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

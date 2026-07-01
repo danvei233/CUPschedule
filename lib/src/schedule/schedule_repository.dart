@@ -121,6 +121,7 @@ class AssetScheduleRepository implements ScheduleRepository {
   Future<ScheduleBundle> load() async {
     final imported = await ImportedScheduleStore().load();
     if (imported != null) {
+      unawaited(ScheduleWidgetBridge.refreshTodayClassesAndReminders());
       return imported;
     }
 
@@ -707,23 +708,37 @@ class ScheduleWidgetBridge {
   );
 
   static Future<void> setThemePreference(String preference) async {
-    await _invokeWidgetMethod('setThemePreference', <String, Object?>{
+    final payload = await _buildTodayWidgetPayload();
+    final arguments = <String, Object?>{
       'preference': preference,
-    });
+    };
+    if (payload != null) {
+      arguments['payload'] = payload;
+    }
+    await _invokeWidgetMethod('setThemePreference', arguments);
   }
 
   static Future<void> setWidgetDisplaySettings(
     TodayWidgetDisplaySettings settings,
   ) async {
-    await _invokeWidgetMethod('setWidgetDisplaySettings', <String, Object?>{
+    final payload = await _buildTodayWidgetPayload(settings: settings);
+    final arguments = <String, Object?>{
       'mode': settings.mode.storageValue,
       'date': settings.fixedDateText,
       'time': settings.fixedTimeText,
-    });
+    };
+    if (payload != null) {
+      arguments['payload'] = payload;
+    }
+    await _invokeWidgetMethod('setWidgetDisplaySettings', arguments);
   }
 
   static Future<void> refreshTodayClasses() async {
-    await _invokeWidgetMethod<void>('refresh');
+    final payload = await _buildTodayWidgetPayload();
+    await _invokeWidgetMethod<void>(
+      'refresh',
+      payload == null ? null : <String, Object?>{'payload': payload},
+    );
   }
 
   static Future<void> refreshTodayClassesAndReminders() async {
@@ -763,6 +778,85 @@ class ScheduleWidgetBridge {
     } on TimeoutException {
       return null;
     }
+  }
+
+  static Future<Map<String, Object?>?> _buildTodayWidgetPayload({
+    TodayWidgetDisplaySettings? settings,
+  }) async {
+    try {
+      final displaySettings =
+          settings ?? await const TodayWidgetDisplaySettingsStore().load();
+      final now = DateTime.now();
+      final referenceDate = displaySettings.mode == TodayWidgetContentMode.fixed
+          ? displaySettings.fixedDate
+          : now;
+      final referenceTime = displaySettings.mode == TodayWidgetContentMode.fixed
+          ? displaySettings.fixedTime
+          : TimeOfDay(hour: now.hour, minute: now.minute);
+      final bundle = await ImportedScheduleStore().loadSelected();
+      if (bundle == null) {
+        return <String, Object?>{
+          'title': '今日课程',
+          'subtitle': '还没有导入课表',
+          'referenceTime': _clockText(referenceTime),
+          'courses': const <Object?>[],
+        };
+      }
+
+      final semester = bundle.semester;
+      final weekIndex = semester.weekIndexFor(referenceDate);
+      final weekday = referenceDate.weekday;
+      final referenceMinutes = referenceTime.hour * 60 + referenceTime.minute;
+      final courses =
+          bundle.schedule.activities
+              .where(
+                (activity) =>
+                    activity.weekday == weekday &&
+                    activity.weekIndexes.contains(weekIndex) &&
+                    _clockMinutes(activity.endTime) > referenceMinutes,
+              )
+              .toList()
+            ..sort(CourseActivity.compareByTime);
+      return <String, Object?>{
+        'title': '今日课程',
+        'subtitle':
+            '${semester.name}  第$weekIndex周  ${_dateText(referenceDate)}',
+        'referenceTime': _clockText(referenceTime),
+        'courses': courses
+            .map(
+              (activity) => <String, Object?>{
+                'name': activity.courseName,
+                'time': '${activity.startTime}-${activity.endTime}',
+                'place': activity.placeText,
+                'teacher': activity.teacherText,
+                'iconKey': activity.iconKey,
+                'colorKey': activity.colorKey,
+              },
+            )
+            .toList(),
+      };
+    } on Object {
+      return null;
+    }
+  }
+
+  static int _clockMinutes(String value) {
+    final parts = value.split(':');
+    if (parts.length != 2) {
+      return 0;
+    }
+    final hour = int.tryParse(parts[0]) ?? 0;
+    final minute = int.tryParse(parts[1]) ?? 0;
+    return hour * 60 + minute;
+  }
+
+  static String _clockText(TimeOfDay value) {
+    return '${value.hour.toString().padLeft(2, '0')}:'
+        '${value.minute.toString().padLeft(2, '0')}';
+  }
+
+  static String _dateText(DateTime value) {
+    return '${value.month}/${value.day}';
   }
 }
 

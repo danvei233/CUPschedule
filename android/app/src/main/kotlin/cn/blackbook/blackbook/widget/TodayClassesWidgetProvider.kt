@@ -100,7 +100,12 @@ class TodayClassesWidgetProvider : AppWidgetProvider() {
                     },
                 )
 
-                val launchIntent = Intent(context, MainActivity::class.java)
+                val launchIntent = Intent(context, MainActivity::class.java).apply {
+                    action = openWidgetAction
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+                }
                 val pendingIntent = PendingIntent.getActivity(
                     context,
                     appWidgetId,
@@ -108,6 +113,14 @@ class TodayClassesWidgetProvider : AppWidgetProvider() {
                     PendingIntent.FLAG_UPDATE_CURRENT or immutableFlag,
                 )
                 views.setOnClickPendingIntent(R.id.widget_root, pendingIntent)
+
+                val itemPendingIntent = PendingIntent.getActivity(
+                    context,
+                    appWidgetId + 2000,
+                    launchIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or mutableFlag,
+                )
+                views.setPendingIntentTemplate(R.id.widget_course_list, itemPendingIntent)
 
                 appWidgetManager.notifyAppWidgetViewDataChanged(
                     appWidgetId,
@@ -184,6 +197,15 @@ class TodayClassesWidgetProvider : AppWidgetProvider() {
             } else {
                 0
             }
+
+        private val mutableFlag: Int
+            get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                PendingIntent.FLAG_MUTABLE
+            } else {
+                0
+            }
+
+        private const val openWidgetAction = "cn.blackbook.blackbook.action.OPEN_WIDGET"
 
         private val timeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
     }
