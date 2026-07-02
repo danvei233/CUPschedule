@@ -1,3 +1,5 @@
+import 'package:blackbook/app.dart';
+import 'package:blackbook/src/account/account_store.dart';
 import 'package:blackbook/src/app_theme_controller.dart';
 import 'package:blackbook/src/schedule/schedule_models.dart';
 import 'package:blackbook/src/schedule/schedule_page.dart';
@@ -18,6 +20,51 @@ void main() {
     expect(find.text('第16周'), findsOneWidget);
     expect(find.byIcon(Icons.sync), findsOneWidget);
     expect(find.textContaining('机器学习与智慧环境'), findsOneWidget);
+  });
+
+  testWidgets('opens schedule when saved credentials have an expired session', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    const accountStore = AccountStore();
+    final now = DateTime.now();
+    await accountStore.saveCredentials(
+      const ManagedAccountCredentials(
+        provider: AccountProvider.cup,
+        username: 'student',
+        password: 'secret',
+      ),
+    );
+    await accountStore.saveSession(
+      ManagedPlatformSession(
+        provider: AccountProvider.cup,
+        cookies: const {'SESSION': 'expired'},
+        savedAt: now.subtract(const Duration(hours: 8)),
+        expiresAt: now.subtract(const Duration(hours: 1)),
+      ),
+    );
+    await ImportedScheduleStore().save(
+      semesterJson: _semesterJson(
+        id: 214,
+        name: '2026-2027-0',
+        startDate: '2026-03-19',
+        endDate: '2026-07-09',
+      ),
+      printDataJson: _printDataJson(
+        semesterId: 214,
+        courseName: '已保存课表',
+        weekIndexes: const [16],
+      ),
+      selectAfterSave: true,
+    );
+
+    await tester.pumpWidget(const BlackbookApp());
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+
+    expect(find.text('中石大登录'), findsNothing);
+    expect(find.text('第16周'), findsOneWidget);
+    expect(find.textContaining('已保存课表'), findsOneWidget);
   });
 
   testWidgets('matches probability and statistics courses as math', (
@@ -171,6 +218,24 @@ void main() {
     expect(find.text('小组件显示内容'), findsOneWidget);
   });
 
+  testWidgets('shows GitHub author link in about dock', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(
+      MaterialApp(home: SchedulePage(repository: _MemoryScheduleRepository())),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('关于'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('作者'), findsOneWidget);
+    expect(find.text('danvei233@github'), findsOneWidget);
+    expect(find.text('github@danvei233'), findsNothing);
+  });
+
   testWidgets('opens account center from the more dock', (tester) async {
     SharedPreferences.setMockInitialValues({});
     await tester.pumpWidget(
@@ -285,6 +350,10 @@ void main() {
           widget.scrollDirection == Axis.horizontal,
     );
     expect(horizontalScroll, findsOneWidget);
+    expect(
+      tester.widget<SingleChildScrollView>(horizontalScroll).clipBehavior,
+      isNot(Clip.none),
+    );
 
     final labels = [
       for (var startYear = 2033; startYear >= 2026; startYear--)

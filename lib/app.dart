@@ -60,10 +60,7 @@ class _BlackbookAppState extends State<BlackbookApp> {
                     ),
                   );
                 }
-                if (state == null ||
-                    !state.hasCredentials ||
-                    !state.hasSession ||
-                    state.sessionExpired) {
+                if (state == null || !state.hasCredentials) {
                   return CupLoginPage(
                     store: _accountStore,
                     onLoginSuccess: (_) {

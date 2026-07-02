@@ -25,6 +25,7 @@ class ManagedAccountState {
     required this.lastStatus,
     required this.lastMessage,
     required this.lastCheckedAt,
+    required this.passwordSaved,
     required this.sessionSavedAt,
     required this.sessionExpiresAt,
   });
@@ -34,10 +35,11 @@ class ManagedAccountState {
   final AccountLoginStatus lastStatus;
   final String lastMessage;
   final DateTime? lastCheckedAt;
+  final bool passwordSaved;
   final DateTime? sessionSavedAt;
   final DateTime? sessionExpiresAt;
 
-  bool get hasCredentials => username.isNotEmpty;
+  bool get hasCredentials => username.isNotEmpty && passwordSaved;
   bool get hasSession => sessionSavedAt != null;
   bool get sessionExpired {
     final expiresAt = sessionExpiresAt;
@@ -97,6 +99,8 @@ class AccountStore {
       lastStatus: _statusFromName(statusName),
       lastMessage: preferences.getString(_messageKey(provider)) ?? '',
       lastCheckedAt: checkedAt,
+      passwordSaved:
+          (preferences.getString(_passwordKey(provider)) ?? '').isNotEmpty,
       sessionSavedAt: _dateTimeFromText(
         preferences.getString(_sessionSavedAtKey(provider)),
       ),

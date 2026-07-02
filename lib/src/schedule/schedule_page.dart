@@ -1928,7 +1928,6 @@ class _DockScheduleList extends StatelessWidget {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       physics: const BouncingScrollPhysics(),
-      clipBehavior: Clip.none,
       child: Row(
         children: [
           for (var index = 0; index < schedules.length; index++) ...[
