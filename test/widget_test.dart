@@ -216,6 +216,47 @@ void main() {
     expect(find.text('测试面板'), findsOneWidget);
     expect(find.text('测试灵动岛/上课提醒'), findsOneWidget);
     expect(find.text('小组件显示内容'), findsOneWidget);
+    expect(find.text('弹窗预览'), findsOneWidget);
+  });
+
+  testWidgets('previews dialogs safely from the hidden test dock', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      'account.cup.username': 'student',
+      'account.cup.password': 'secret',
+    });
+    await tester.pumpWidget(
+      MaterialApp(home: SchedulePage(repository: _MemoryScheduleRepository())),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pumpAndSettle();
+    await tester.longPress(find.text('关于'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('弹窗预览'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('登录信息错误'), findsOneWidget);
+    expect(find.text('覆盖本地修改'), findsOneWidget);
+    expect(find.text('覆盖已导入课表'), findsOneWidget);
+    expect(find.text('删除课程'), findsOneWidget);
+    expect(find.text('重命名课表'), findsOneWidget);
+    expect(find.text('网络错误轻提示'), findsOneWidget);
+
+    await tester.tap(find.text('登录信息错误'));
+    await tester.pumpAndSettle();
+    expect(find.text('保存的账号或密码无法通过统一认证，请重试或登出后重新填写。'), findsOneWidget);
+    await tester.tap(find.text('登出'));
+    await tester.pumpAndSettle();
+
+    final accountState = await const AccountStore().loadState(
+      AccountProvider.cup,
+    );
+    expect(accountState.hasCredentials, isTrue);
+    expect(find.text('弹窗预览'), findsOneWidget);
   });
 
   testWidgets('shows GitHub author link in about dock', (tester) async {
@@ -400,6 +441,54 @@ void main() {
 
     expect(find.text('第15周'), findsOneWidget);
     expect(find.textContaining('新增周保持课'), findsOneWidget);
+  });
+
+  testWidgets('creates, displays, and edits a minor course', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(
+      MaterialApp(home: SchedulePage(repository: _MemoryScheduleRepository())),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+
+    await tester.tap(find.byIcon(Icons.add));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextField, '课程名称'), '辅修新增课');
+    await tester.ensureVisible(find.text('辅修'));
+    await tester.tap(find.text('辅修'));
+    await tester.tap(find.text('SAVE'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 320));
+
+    expect(find.textContaining('[辅修]'), findsOneWidget);
+    expect(find.textContaining('辅修新增课'), findsOneWidget);
+
+    var saved = await ImportedScheduleStore().loadSelected();
+    var activity = saved!.schedule.activities.singleWhere(
+      (activity) => activity.courseName == '辅修新增课',
+    );
+    expect(activity.programType, CourseProgramType.minor);
+
+    await tester.tap(find.textContaining('辅修新增课'));
+    await tester.pumpAndSettle();
+    expect(find.text('辅修'), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.more_horiz));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('编辑课程'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('主修'));
+    await tester.tap(find.text('主修'));
+    await tester.tap(find.text('SAVE'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 320));
+
+    expect(find.textContaining('[辅修]'), findsNothing);
+    expect(find.textContaining('辅修新增课'), findsOneWidget);
+    saved = await ImportedScheduleStore().loadSelected();
+    activity = saved!.schedule.activities.singleWhere(
+      (activity) => activity.courseName == '辅修新增课',
+    );
+    expect(activity.programType, CourseProgramType.primary);
   });
 
   testWidgets('renames a saved schedule from schedule manager', (tester) async {

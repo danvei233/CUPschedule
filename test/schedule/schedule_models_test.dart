@@ -87,10 +87,89 @@ void main() {
     expect(activity.iconKey, 'computer');
     expect(activity.colorKey, 'chemistry');
     expect(activity.courseNature, '选修');
+    expect(activity.programType, CourseProgramType.primary);
     expect(activity.toJson()['iconKey'], 'computer');
     expect(activity.toJson()['colorKey'], 'chemistry');
     expect(activity.toJson()['courseNature'], '选修');
+    expect(activity.toJson()['programType'], 'primary');
     expect(activity.copyWith(clearIconKey: true).iconKey, isNull);
     expect(activity.copyWith(clearColorKey: true).colorKey, isNull);
   });
+
+  test('merges activities from primary and minor course tables', () {
+    final schedule = StudentSchedule.fromCupPrintData({
+      'studentTableVms': [
+        _studentTable(
+          activities: [_activityJson(name: '主修课程', weekday: 2)],
+          courseUnits: [_courseUnitJson(1), _courseUnitJson(2)],
+        ),
+        _studentTable(
+          activities: [_activityJson(name: '辅修课程', weekday: 1)],
+          courseUnits: [_courseUnitJson(1), _courseUnitJson(2)],
+        ),
+      ],
+    });
+
+    expect(schedule.activities.map((activity) => activity.courseName), [
+      '辅修课程',
+      '主修课程',
+    ]);
+    expect(schedule.activities.map((activity) => activity.programType), [
+      CourseProgramType.minor,
+      CourseProgramType.primary,
+    ]);
+    expect(schedule.courseUnits.map((unit) => unit.indexNo), [1, 2]);
+  });
+
+  test('round-trips a minor course program type', () {
+    final activity = CourseActivity.fromJson({
+      ..._activityJson(name: '辅修课程', weekday: 1),
+      'programType': 'minor',
+    });
+
+    expect(activity.programType, CourseProgramType.minor);
+    expect(activity.toJson()['programType'], 'minor');
+    expect(
+      activity.copyWith(programType: CourseProgramType.primary).programType,
+      CourseProgramType.primary,
+    );
+  });
+}
+
+Map<String, dynamic> _studentTable({
+  required List<Map<String, dynamic>> activities,
+  required List<Map<String, dynamic>> courseUnits,
+}) {
+  return {
+    'id': 1,
+    'name': '测试学生',
+    'code': '2023000000',
+    'activities': activities,
+    'timeTableLayout': {'courseUnitList': courseUnits},
+  };
+}
+
+Map<String, dynamic> _activityJson({
+  required String name,
+  required int weekday,
+}) {
+  return {
+    'lessonId': weekday,
+    'courseName': name,
+    'weekIndexes': [1],
+    'weekday': weekday,
+    'startUnit': 1,
+    'endUnit': 2,
+  };
+}
+
+Map<String, dynamic> _courseUnitJson(int index) {
+  return {
+    'indexNo': index,
+    'nameZh': '第$index节',
+    'startTime': index == 1 ? 800 : 850,
+    'endTime': index == 1 ? 845 : 935,
+    'dayPart': '上午',
+    'segmentIndex': 0,
+  };
 }

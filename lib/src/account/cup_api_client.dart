@@ -72,7 +72,11 @@ class CupApiClient {
     final afterLoginLocation = loginPost.headers['location'];
     if (afterLoginLocation == null || afterLoginLocation.isEmpty) {
       final text = utf8.decode(loginPost.bodyBytes, allowMalformed: true);
-      throw StateError(_loginErrorMessage(text) ?? '统一认证没有返回登录跳转');
+      final message = _loginErrorMessage(text);
+      if (isCupCredentialErrorMessage(message)) {
+        throw CupCredentialsException(message!);
+      }
+      throw StateError(message ?? '统一认证没有返回登录跳转');
     }
 
     await _followRedirects(
@@ -280,7 +284,7 @@ class CupApiClient {
 
   void _throwIfLoggedOut(http.Response response, String text, String message) {
     if (_isLoggedOutResponse(response, text)) {
-      throw StateError(message);
+      throw CupSessionExpiredException(message);
     }
   }
 
@@ -450,6 +454,35 @@ class CupApiClient {
         int.parse(normalized.substring(i, i + 2), radix: 16),
     ];
   }
+}
+
+bool isCupCredentialErrorMessage(String? message) {
+  if (message == null || message.isEmpty) {
+    return false;
+  }
+  return message.contains('用户名或密码') ||
+      message.contains('账号或密码') ||
+      message.contains('密码错误') ||
+      message.contains('用户不存在') ||
+      message.contains('账号不存在');
+}
+
+class CupCredentialsException implements Exception {
+  const CupCredentialsException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
+class CupSessionExpiredException implements Exception {
+  const CupSessionExpiredException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
 }
 
 class CupLoginForm {

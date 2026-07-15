@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../account/account_center_dialog.dart';
 import '../account/cup_account_service.dart';
 import '../account/cup_api_client.dart';
+import '../account/cup_auth_failure_handler.dart';
 import '../app_palette.dart';
 import '../app_theme_controller.dart';
 import 'cup_schedule_import_page.dart';
@@ -69,6 +70,8 @@ class _SchedulePageState extends State<SchedulePage> {
   int _bundlePersistGeneration = 0;
   final _accountService = const CupAccountService();
   bool _syncingSchedule = false;
+  Object? _handledLoadError;
+  bool _handlingLoadError = false;
 
   @override
   void initState() {
@@ -128,10 +131,36 @@ class _SchedulePageState extends State<SchedulePage> {
 
         if (snapshot.hasError || !snapshot.hasData) {
           final palette = blackbookPalette(context);
+          final error = snapshot.error ?? StateError('未知错误');
+          if (!identical(_handledLoadError, error)) {
+            _handledLoadError = error;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _handleInitialLoadFailure(error);
+            });
+          }
           return Scaffold(
             backgroundColor: palette.pageBackground,
             body: SafeArea(
-              child: Center(child: Text('课表加载失败：${snapshot.error ?? '未知错误'}')),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      '课表暂时无法加载',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: palette.ink,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: _handlingLoadError ? null : _retryInitialLoad,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('重试'),
+                    ),
+                  ],
+                ),
+              ),
             ),
           );
         }
@@ -239,7 +268,10 @@ class _SchedulePageState extends State<SchedulePage> {
 
     CupApiClient? client;
     try {
-      final lease = await _accountService.acquireSession();
+      final lease = await _acquireSessionForSync();
+      if (lease == null) {
+        return;
+      }
       client = lease.client;
       CupSemesterOption? sourceSemester;
       for (final semester in lease.session.semesters) {
@@ -255,12 +287,14 @@ class _SchedulePageState extends State<SchedulePage> {
       try {
         payload = await client.fetchSchedule(lease.session, sourceSemester);
       } on Object catch (error) {
-        final message = _cleanSyncError(error);
-        if (!message.contains('会话已过期') && !message.contains('会话不可用')) {
+        if (error is! CupSessionExpiredException) {
           rethrow;
         }
         client.close();
-        final renewed = await _accountService.refreshSession();
+        final renewed = await _renewSessionForSync();
+        if (renewed == null) {
+          return;
+        }
         client = renewed.client;
         payload = await client.fetchSchedule(renewed.session, sourceSemester);
       }
@@ -360,6 +394,70 @@ class _SchedulePageState extends State<SchedulePage> {
       .toString()
       .replaceFirst('Bad state: ', '')
       .replaceFirst('Exception: ', '');
+
+  Future<CupSessionLease?> _acquireSessionForSync() {
+    return _sessionForSync(_accountService.acquireSession);
+  }
+
+  Future<void> _handleInitialLoadFailure(Object error) async {
+    if (!mounted || _handlingLoadError) {
+      return;
+    }
+    _handlingLoadError = true;
+    final action = await handleCupAuthFailure(context, error);
+    if (!mounted) {
+      return;
+    }
+    _handlingLoadError = false;
+    if (action == CupAuthFailureAction.retry) {
+      _retryInitialLoad();
+      return;
+    }
+    if (action == CupAuthFailureAction.loggedOut) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) =>
+              CupLoginPage(onLoginSuccess: (_) => Navigator.of(context).pop()),
+        ),
+      );
+      if (mounted) {
+        _retryInitialLoad();
+      }
+    }
+  }
+
+  void _retryInitialLoad() {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _handledLoadError = null;
+      _bundleFuture = _loadBundle();
+    });
+  }
+
+  Future<CupSessionLease?> _renewSessionForSync() {
+    return _sessionForSync(_accountService.refreshSession);
+  }
+
+  Future<CupSessionLease?> _sessionForSync(
+    Future<CupSessionLease> Function() operation,
+  ) async {
+    while (mounted) {
+      try {
+        return await operation();
+      } on Object catch (error) {
+        if (!mounted) {
+          return null;
+        }
+        final action = await handleCupAuthFailure(context, error);
+        if (action != CupAuthFailureAction.retry) {
+          return null;
+        }
+      }
+    }
+    return null;
+  }
 
   Future<void> _openSchedulePicker(ScheduleBundle current) async {
     final latestBundles = await _loadImportedBundles();
@@ -572,8 +670,10 @@ class _SchedulePageState extends State<SchedulePage> {
       enableDrag: true,
       backgroundColor: Colors.transparent,
       constraints: const BoxConstraints(maxWidth: double.infinity),
-      builder: (_) =>
-          _TestDockSheet(onWidgetMode: () => _openWidgetModeDock(pageContext)),
+      builder: (_) => _TestDockSheet(
+        onWidgetMode: () => _openWidgetModeDock(pageContext),
+        onDialogPreview: () => _openDialogPreviewDock(pageContext),
+      ),
     );
   }
 
@@ -586,6 +686,16 @@ class _SchedulePageState extends State<SchedulePage> {
       backgroundColor: Colors.transparent,
       constraints: const BoxConstraints(maxWidth: double.infinity),
       builder: (_) => const _WidgetModeDockSheet(),
+    );
+  }
+
+  Future<void> _openDialogPreviewDock(BuildContext pageContext) {
+    return showModalBottomSheet<void>(
+      context: pageContext,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      constraints: const BoxConstraints(maxWidth: double.infinity),
+      builder: (_) => const _DialogPreviewDockSheet(),
     );
   }
 
@@ -840,6 +950,7 @@ class _SchedulePageState extends State<SchedulePage> {
                 colorKey: activity.colorKey,
                 clearColorKey: activity.colorKey == null,
                 courseNature: activity.courseNature,
+                programType: activity.programType,
               ),
           ];
     final updated = _bundleWithUpsertedCourses(
@@ -2254,9 +2365,13 @@ class _AboutInfoLine extends StatelessWidget {
 }
 
 class _TestDockSheet extends StatefulWidget {
-  const _TestDockSheet({required this.onWidgetMode});
+  const _TestDockSheet({
+    required this.onWidgetMode,
+    required this.onDialogPreview,
+  });
 
   final VoidCallback onWidgetMode;
+  final VoidCallback onDialogPreview;
 
   @override
   State<_TestDockSheet> createState() => _TestDockSheetState();
@@ -2297,6 +2412,20 @@ class _TestDockSheetState extends State<_TestDockSheet> {
               });
             },
           ),
+          const SizedBox(height: 8),
+          _DockListAction(
+            icon: Icons.web_asset_outlined,
+            title: '弹窗预览',
+            subtitle: '查看登录、覆盖、删除与错误提示',
+            onTap: () {
+              Navigator.of(context).pop();
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) {
+                  widget.onDialogPreview();
+                }
+              });
+            },
+          ),
           if (_message != null) ...[
             const SizedBox(height: 10),
             Text(
@@ -2326,6 +2455,147 @@ class _TestDockSheetState extends State<_TestDockSheet> {
       _busy = false;
       _message = ok ? '已触发测试通知' : '已请求通知权限，请在系统通知设置中开启';
     });
+  }
+}
+
+class _DialogPreviewDockSheet extends StatelessWidget {
+  const _DialogPreviewDockSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    final maxHeight = MediaQuery.sizeOf(context).height * 0.78;
+    return _SimpleDockFrame(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: maxHeight),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const _DockHeader(title: '弹窗预览', icon: Icons.web_asset_outlined),
+            const SizedBox(height: 8),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  _DockListAction(
+                    icon: Icons.lock_outline,
+                    title: '登录信息错误',
+                    subtitle: '账号密码错误时的重试与登出弹窗',
+                    onTap: () => showCupCredentialsErrorDialog(context),
+                  ),
+                  _DockListAction(
+                    icon: Icons.sync_problem_outlined,
+                    title: '覆盖本地修改',
+                    subtitle: '同步教务课表前的覆盖确认',
+                    onTap: () => _showConfirmDialog(
+                      context,
+                      title: '覆盖本地修改？',
+                      content:
+                          '当前课表有手工增删改记录。继续同步会用教务数据覆盖这些修改。\n\n'
+                          '本地指纹：2f5e8c10\n源数据指纹：9a74d6b2\n新数据指纹：c3184a90',
+                      confirmLabel: '覆盖同步',
+                    ),
+                  ),
+                  _DockListAction(
+                    icon: Icons.file_download_outlined,
+                    title: '覆盖已导入课表',
+                    subtitle: '重复导入同一学期时的确认弹窗',
+                    onTap: () => _showConfirmDialog(
+                      context,
+                      title: '覆盖已导入课表？',
+                      content:
+                          '2025-2026-2 已存在，继续会覆盖本地保存的数据。\n\n'
+                          '本地指纹：2f5e8c10\n新数据指纹：c3184a90\n状态：数据不同',
+                      confirmLabel: '覆盖',
+                    ),
+                  ),
+                  _DockListAction(
+                    icon: Icons.delete_outline,
+                    title: '删除课程',
+                    subtitle: '删除整门课程及其时间段的确认弹窗',
+                    onTap: () => _showConfirmDialog(
+                      context,
+                      title: '删除课程？',
+                      content: '确定删除「计算机网络原理」吗？',
+                      confirmLabel: '删除',
+                    ),
+                  ),
+                  _DockListAction(
+                    icon: Icons.drive_file_rename_outline,
+                    title: '重命名课表',
+                    subtitle: '课表名称编辑弹窗',
+                    onTap: () => _showRenameDialog(context),
+                  ),
+                  _DockListAction(
+                    icon: Icons.wifi_off_outlined,
+                    title: '网络错误轻提示',
+                    subtitle: '非凭据错误只在页面底部提示',
+                    onTap: () {
+                      ScaffoldMessenger.of(context)
+                        ..hideCurrentSnackBar()
+                        ..showSnackBar(
+                          const SnackBar(
+                            content: Text('登录失败，请检查网络'),
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showConfirmDialog(
+    BuildContext context, {
+    required String title,
+    required String content,
+    required String confirmLabel,
+  }) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: Text(content),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(confirmLabel),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showRenameDialog(BuildContext context) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('重命名课表'),
+        content: TextFormField(
+          initialValue: '2025-2026-2',
+          decoration: const InputDecoration(labelText: '课表名称'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -3569,7 +3839,11 @@ class _CourseBlockText extends StatelessWidget {
   }
 
   String get _blockText {
-    final parts = <String>[if (outOfWeek) '[非本周]', activity.courseName];
+    final parts = <String>[
+      if (outOfWeek) '[非本周]',
+      if (activity.programType == CourseProgramType.minor) '[辅修]',
+      activity.courseName,
+    ];
     final room = activity.room.trim();
     if (room.isNotEmpty) {
       parts.add('@$room');
@@ -3634,6 +3908,9 @@ class _CourseDetailSheet extends StatelessWidget {
     final natureColor = activity.courseNature.contains('选')
         ? const Color(0xFF7A62D8)
         : const Color(0xFF3196D4);
+    final programColor = activity.programType == CourseProgramType.minor
+        ? const Color(0xFFDA5A76)
+        : const Color(0xFF20A077);
     return Align(
       alignment: Alignment.bottomCenter,
       heightFactor: 1,
@@ -3722,6 +3999,27 @@ class _CourseDetailSheet extends StatelessWidget {
                                 style: Theme.of(context).textTheme.labelMedium
                                     ?.copyWith(
                                       color: natureColor,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0,
+                                    ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: programColor.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                activity.programType.label,
+                                style: Theme.of(context).textTheme.labelMedium
+                                    ?.copyWith(
+                                      color: programColor,
                                       fontSize: 11,
                                       fontWeight: FontWeight.w800,
                                       letterSpacing: 0,
@@ -3965,6 +4263,7 @@ class _CourseEditorPageState extends State<_CourseEditorPage> {
   String? _iconKey;
   String? _colorKey;
   late String _courseNature;
+  late CourseProgramType _programType;
 
   @override
   void initState() {
@@ -3984,6 +4283,7 @@ class _CourseEditorPageState extends State<_CourseEditorPage> {
     _iconKey = activity?.iconKey;
     _colorKey = activity?.colorKey;
     _courseNature = activity?.courseNature ?? '必修';
+    _programType = activity?.programType ?? CourseProgramType.primary;
     final relatedActivities = widget.relatedActivities.isEmpty
         ? [?activity]
         : widget.relatedActivities;
@@ -4083,6 +4383,14 @@ class _CourseEditorPageState extends State<_CourseEditorPage> {
                       });
                     },
                   ),
+                  _CourseProgramEditor(
+                    value: _programType,
+                    onChanged: (value) {
+                      setState(() {
+                        _programType = value;
+                      });
+                    },
+                  ),
                   Divider(height: 28, color: palette.divider),
                   for (var index = 0; index < _timeSlots.length; index++)
                     _CourseTimeSlotEditor(
@@ -4166,6 +4474,7 @@ class _CourseEditorPageState extends State<_CourseEditorPage> {
           iconKey: _iconKey,
           colorKey: _colorKey,
           courseNature: _courseNature,
+          programType: _programType,
         ),
       );
     }
@@ -4270,6 +4579,7 @@ class _CourseEditorPageState extends State<_CourseEditorPage> {
       iconKey: _iconKey,
       colorKey: _colorKey,
       courseNature: _courseNature,
+      programType: _programType,
     );
   }
 
@@ -4658,6 +4968,58 @@ class _CourseNatureEditor extends StatelessWidget {
                     return palette.primary;
                   }
                   return palette.surfaceAlt;
+                }),
+                side: WidgetStatePropertyAll(
+                  BorderSide(color: palette.divider),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CourseProgramEditor extends StatelessWidget {
+  const _CourseProgramEditor({required this.value, required this.onChanged});
+
+  final CourseProgramType value;
+  final ValueChanged<CourseProgramType> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = blackbookPalette(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 9),
+      child: Row(
+        children: [
+          Icon(Icons.school_outlined, color: palette.primary, size: 25),
+          const SizedBox(width: 18),
+          Expanded(
+            child: SegmentedButton<CourseProgramType>(
+              segments: const [
+                ButtonSegment<CourseProgramType>(
+                  value: CourseProgramType.primary,
+                  label: Text('主修'),
+                ),
+                ButtonSegment<CourseProgramType>(
+                  value: CourseProgramType.minor,
+                  label: Text('辅修'),
+                ),
+              ],
+              selected: {value},
+              onSelectionChanged: (values) => onChanged(values.first),
+              style: ButtonStyle(
+                foregroundColor: WidgetStateProperty.resolveWith((states) {
+                  return states.contains(WidgetState.selected)
+                      ? palette.onPrimary
+                      : palette.subtle;
+                }),
+                backgroundColor: WidgetStateProperty.resolveWith((states) {
+                  return states.contains(WidgetState.selected)
+                      ? palette.primary
+                      : palette.surfaceAlt;
                 }),
                 side: WidgetStatePropertyAll(
                   BorderSide(color: palette.divider),
@@ -5504,7 +5866,8 @@ String _courseClipboardText(CourseActivity activity) {
       : activity.lessonCode;
   return [
     activity.courseName,
-    '${activity.credits.toStringAsFixed(1)} 学分 ${activity.courseNature}',
+    '${activity.credits.toStringAsFixed(1)} 学分 '
+        '${activity.courseNature} ${activity.programType.label}',
     '授课教师：${activity.teacherText}',
     '上课地点：${activity.placeText}',
     '周次：第 ${activity.weeksText} 周',

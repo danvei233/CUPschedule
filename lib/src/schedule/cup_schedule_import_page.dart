@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../account/cup_account_service.dart';
 import '../account/cup_api_client.dart';
+import '../account/cup_auth_failure_handler.dart';
 import '../app_palette.dart';
 import '../common/stable_fingerprint.dart';
 import 'schedule_models.dart';
@@ -119,14 +120,16 @@ class _CupScheduleImportPageState extends State<CupScheduleImportPage> {
         '${lease.renewed ? '已续期' : '已复用'}会话，识别 ${lease.session.semesters.length} 个学期',
       );
     } on Object catch (error) {
-      final message = _cleanError(error);
       if (!mounted) {
         return;
       }
       setState(() {
         _loading = false;
       });
-      _showNotice('中石大 API 登录失败：$message', error: true);
+      final action = await handleCupAuthFailure(context, error);
+      if (action == CupAuthFailureAction.retry && mounted) {
+        await _start();
+      }
     }
   }
 
@@ -149,6 +152,14 @@ class _CupScheduleImportPageState extends State<CupScheduleImportPage> {
 
     try {
       final payload = await _fetchScheduleWithRenew(session, semester);
+      if (payload == null) {
+        if (mounted) {
+          setState(() {
+            _loading = false;
+          });
+        }
+        return;
+      }
       if (payload.semester.id != semester.id) {
         throw StateError('返回课表学期和当前选择不一致');
       }
@@ -268,31 +279,37 @@ class _CupScheduleImportPageState extends State<CupScheduleImportPage> {
       .replaceFirst('Bad state: ', '')
       .replaceFirst('Exception: ', '');
 
-  Future<CupSchedulePayload> _fetchScheduleWithRenew(
+  Future<CupSchedulePayload?> _fetchScheduleWithRenew(
     CupCourseTableSession session,
     CupSemesterOption semester,
   ) async {
     try {
       return await _client.fetchSchedule(session, semester);
     } on Object catch (error) {
-      if (!_isSessionExpiredError(error)) {
+      if (error is! CupSessionExpiredException) {
         rethrow;
       }
       _showNotice('会话过期，自动续期后重试');
-      final lease = await _accountService.refreshSession();
-      _replaceClient(lease.client);
-      if (mounted) {
-        setState(() {
-          _session = lease.session;
-        });
+      while (mounted) {
+        try {
+          final lease = await _accountService.refreshSession();
+          _replaceClient(lease.client);
+          setState(() {
+            _session = lease.session;
+          });
+          return _client.fetchSchedule(lease.session, semester);
+        } on Object catch (renewalError) {
+          if (!mounted) {
+            return null;
+          }
+          final action = await handleCupAuthFailure(context, renewalError);
+          if (action != CupAuthFailureAction.retry) {
+            return null;
+          }
+        }
       }
-      return _client.fetchSchedule(lease.session, semester);
+      return null;
     }
-  }
-
-  bool _isSessionExpiredError(Object error) {
-    final message = _cleanError(error);
-    return message.contains('会话已过期') || message.contains('会话不可用');
   }
 
   void _replaceClient(CupApiClient nextClient) {
@@ -573,7 +590,8 @@ class _ImportPreview extends StatelessWidget {
                 (activity) => _PreviewRow(
                   Icons.menu_book_outlined,
                   activity.courseName,
-                  '${activity.credits.toStringAsFixed(1)} 学分',
+                  '${activity.credits.toStringAsFixed(1)} 学分 · '
+                  '${activity.programType.label}',
                 ),
               )
               .toList(),
@@ -586,8 +604,11 @@ class _ImportPreview extends StatelessWidget {
     return activities
         .fold<Map<String, CourseActivity>>(
           {},
-          (map, activity) =>
-              map..putIfAbsent(activity.courseCode, () => activity),
+          (map, activity) => map
+            ..putIfAbsent(
+              '${activity.programType.storageValue}|${activity.courseCode}',
+              () => activity,
+            ),
         )
         .values
         .toList()
@@ -613,6 +634,7 @@ class _ImportPreview extends StatelessWidget {
       'endUnit': activity.endUnit,
       'room': activity.room,
       'teachers': activity.teachers,
+      'programType': activity.programType.storageValue,
     };
   }
 }

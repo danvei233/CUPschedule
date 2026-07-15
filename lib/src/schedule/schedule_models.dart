@@ -118,21 +118,39 @@ class StudentSchedule {
   }
 
   factory StudentSchedule.fromCupPrintData(Map<String, dynamic> json) {
-    final studentTableVms = json['studentTableVms'] as List<dynamic>;
-    final table = studentTableVms.first as Map<String, dynamic>;
+    final studentTableVms = (json['studentTableVms'] as List<dynamic>)
+        .cast<Map<String, dynamic>>();
+    final table = studentTableVms.first;
     final activities =
-        (table['activities'] as List<dynamic>)
-            .cast<Map<String, dynamic>>()
-            .map(CourseActivity.fromJson)
+        studentTableVms.indexed
+            .expand(
+              (entry) => (entry.$2['activities'] as List<dynamic>? ?? const [])
+                  .cast<Map<String, dynamic>>()
+                  .map((json) {
+                    final activity = CourseActivity.fromJson(json);
+                    if (json.containsKey('programType')) {
+                      return activity;
+                    }
+                    return activity.copyWith(
+                      programType: entry.$1 == 0
+                          ? CourseProgramType.primary
+                          : CourseProgramType.minor,
+                    );
+                  }),
+            )
             .toList()
           ..sort(CourseActivity.compareByTime);
-    final layout = table['timeTableLayout'] as Map<String, dynamic>;
-    final courseUnits =
-        (layout['courseUnitList'] as List<dynamic>)
-            .cast<Map<String, dynamic>>()
-            .map(CourseUnit.fromJson)
-            .toList()
-          ..sort((a, b) => a.indexNo.compareTo(b.indexNo));
+    final courseUnitsByIndex = <int, CourseUnit>{};
+    for (final studentTable in studentTableVms) {
+      final layout = studentTable['timeTableLayout'] as Map<String, dynamic>?;
+      final rawUnits = layout?['courseUnitList'] as List<dynamic>? ?? const [];
+      for (final rawUnit in rawUnits.cast<Map<String, dynamic>>()) {
+        final unit = CourseUnit.fromJson(rawUnit);
+        courseUnitsByIndex.putIfAbsent(unit.indexNo, () => unit);
+      }
+    }
+    final courseUnits = courseUnitsByIndex.values.toList()
+      ..sort((a, b) => a.indexNo.compareTo(b.indexNo));
 
     return StudentSchedule(
       student: ScheduleStudent.fromJson(table),
@@ -228,6 +246,23 @@ class ScheduleStudent {
   }
 }
 
+enum CourseProgramType {
+  primary('primary', '主修'),
+  minor('minor', '辅修');
+
+  const CourseProgramType(this.storageValue, this.label);
+
+  final String storageValue;
+  final String label;
+
+  static CourseProgramType fromJson(Object? value) {
+    return values.firstWhere(
+      (type) => type.storageValue == value,
+      orElse: () => primary,
+    );
+  }
+}
+
 class CourseActivity {
   const CourseActivity({
     required this.lessonId,
@@ -251,6 +286,7 @@ class CourseActivity {
     this.iconKey,
     this.colorKey,
     this.courseNature = '必修',
+    this.programType = CourseProgramType.primary,
   });
 
   final int lessonId;
@@ -274,6 +310,7 @@ class CourseActivity {
   final String? iconKey;
   final String? colorKey;
   final String courseNature;
+  final CourseProgramType programType;
 
   factory CourseActivity.fromJson(Map<String, dynamic> json) {
     return CourseActivity(
@@ -304,6 +341,7 @@ class CourseActivity {
       iconKey: json['iconKey'] as String?,
       colorKey: json['colorKey'] as String?,
       courseNature: _courseNatureFromJson(json),
+      programType: CourseProgramType.fromJson(json['programType']),
     );
   }
 
@@ -329,6 +367,7 @@ class CourseActivity {
     String? iconKey,
     String? colorKey,
     String? courseNature,
+    CourseProgramType? programType,
     bool clearIconKey = false,
     bool clearColorKey = false,
   }) {
@@ -354,6 +393,7 @@ class CourseActivity {
       iconKey: clearIconKey ? null : iconKey ?? this.iconKey,
       colorKey: clearColorKey ? null : colorKey ?? this.colorKey,
       courseNature: courseNature ?? this.courseNature,
+      programType: programType ?? this.programType,
     );
   }
 
@@ -380,6 +420,7 @@ class CourseActivity {
       if (iconKey != null) 'iconKey': iconKey,
       if (colorKey != null) 'colorKey': colorKey,
       'courseNature': courseNature,
+      'programType': programType.storageValue,
     };
   }
 

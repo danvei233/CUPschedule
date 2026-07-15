@@ -1,10 +1,21 @@
 import 'account_store.dart';
 import 'cup_api_client.dart';
 
+typedef CupApiClientFactory =
+    CupApiClient Function(Map<String, String>? initialCookies);
+
+CupApiClient createCupApiClient(Map<String, String>? initialCookies) {
+  return CupApiClient(initialCookies: initialCookies);
+}
+
 class CupAccountService {
-  const CupAccountService({this.store = const AccountStore()});
+  const CupAccountService({
+    this.store = const AccountStore(),
+    this.clientFactory = createCupApiClient,
+  });
 
   final AccountStore store;
+  final CupApiClientFactory clientFactory;
 
   static const _sessionTtl = Duration(hours: 6);
 
@@ -12,7 +23,7 @@ class CupAccountService {
     if (!forceRefresh) {
       final storedSession = await store.loadSession(AccountProvider.cup);
       if (storedSession != null && storedSession.isUsable) {
-        final client = CupApiClient(initialCookies: storedSession.cookies);
+        final client = clientFactory(storedSession.cookies);
         try {
           final session = await client.loadCourseTableSession();
           await _saveHealthySession(client);
@@ -21,9 +32,12 @@ class CupAccountService {
             session: session,
             renewed: false,
           );
-        } on Object {
+        } on CupSessionExpiredException {
           client.close();
           await store.clearSession(AccountProvider.cup);
+        } on Object {
+          client.close();
+          rethrow;
         }
       }
     }
@@ -45,7 +59,7 @@ class CupAccountService {
   Future<CupSessionLease> loginAndSave(
     ManagedAccountCredentials credentials,
   ) async {
-    final client = CupApiClient();
+    final client = clientFactory(null);
     try {
       final session = await client.login(credentials);
       await store.saveCredentials(credentials);
@@ -62,7 +76,9 @@ class CupAccountService {
           .toString()
           .replaceFirst('Bad state: ', '')
           .replaceFirst('Exception: ', '');
-      await store.clearSession(AccountProvider.cup);
+      if (error is CupCredentialsException) {
+        await store.clearSession(AccountProvider.cup);
+      }
       await store.saveCheckResult(
         provider: AccountProvider.cup,
         status: AccountLoginStatus.failed,

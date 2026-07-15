@@ -137,11 +137,26 @@ void main() {
           credits: 1,
           lessonName: '',
           lessonRemark: null,
+          programType: CourseProgramType.minor,
         ),
       );
 
       expect(await store.sourceFingerprintForSemester(191), sourceFingerprint);
       expect(await store.fingerprintForSemester(191), isNot(sourceFingerprint));
+      final localCourse = (await store.loadSelected())!.schedule.activities
+          .singleWhere((activity) => activity.courseName == '本地课程');
+      expect(localCourse.programType, CourseProgramType.minor);
+
+      await store.deleteCourse(
+        semesterId: saved.semester.id,
+        activityKey: scheduleActivityStorageKey(localCourse),
+      );
+      expect(
+        (await store.loadSelected())!.schedule.activities.where(
+          (activity) => activity.courseName == '本地课程',
+        ),
+        isEmpty,
+      );
     },
   );
 

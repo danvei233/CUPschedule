@@ -147,12 +147,6 @@ class CupScheduleRepository implements ScheduleRepository {
         selectAfterSave: true,
         updateSourceFingerprint: true,
       );
-    } on Object catch (error) {
-      final message = error
-          .toString()
-          .replaceFirst('Bad state: ', '')
-          .replaceFirst('Exception: ', '');
-      throw StateError('首次课表导入失败：$message');
     } finally {
       client?.close();
     }
