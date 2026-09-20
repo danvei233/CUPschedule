@@ -9,6 +9,7 @@ import '../account/cup_account_service.dart';
 import '../account/cup_api_client.dart';
 import '../common/stable_fingerprint.dart';
 import 'schedule_models.dart';
+import '../recording/recording_controller.dart';
 
 class ScheduleBundle {
   const ScheduleBundle({required this.semester, required this.schedule});
@@ -792,6 +793,11 @@ class ScheduleWidgetBridge {
   static Future<void> refreshTodayClassesAndReminders() async {
     await refreshTodayClasses();
     await scheduleClassReminders();
+    if (RecordingController.instance.enabled) {
+      unawaited(RecordingController.instance.syncSchedule().catchError((Object error) {
+        RecordingController.instance.error = '$error';
+      }));
+    }
   }
 
   static Future<void> scheduleClassReminders() async {

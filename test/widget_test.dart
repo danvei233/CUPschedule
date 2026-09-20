@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:blackbook/app.dart';
 import 'package:blackbook/src/account/account_store.dart';
 import 'package:blackbook/src/app_theme_controller.dart';
@@ -116,6 +118,94 @@ void main() {
     expect(scaffold.backgroundColor, const Color(0xFF0B0C10));
   });
 
+  testWidgets('shows translucent background materials in dark mode', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({
+      AppThemeController.storageKey: 'dark',
+      AppThemeController.backgroundPathKey: 'app/background.png',
+    });
+    final controller = AppThemeController(
+      imageReader: (_) async => base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      ),
+    );
+    await controller.load();
+    await tester.pumpWidget(
+      AppThemeScope(
+        controller: controller,
+        child: MaterialApp(
+          theme: ThemeData.dark(useMaterial3: true),
+          home: SchedulePage(repository: _MemoryScheduleRepository()),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+
+    expect(controller.hasBackgroundImage, isTrue);
+    expect(
+      tester.widget<Scaffold>(find.byType(Scaffold).first).backgroundColor,
+      Colors.transparent,
+    );
+
+    final weekTitle = tester.widget<Container>(
+      find.byKey(const ValueKey<String>('week-title-background')),
+    );
+    final weekTitleDecoration = weekTitle.decoration! as BoxDecoration;
+    expect(weekTitleDecoration.color!.a, lessThanOrEqualTo(0.16));
+    final mondayLabel = tester.widget<Text>(find.text('一'));
+    expect(mondayLabel.style!.color!.computeLuminance(), greaterThan(0.8));
+    final weekLabel = tester.widget<Text>(find.text('第16周'));
+    expect(weekLabel.style!.color!.computeLuminance(), greaterThan(0.8));
+
+    final courseBlockFinder = find.byWidgetPredicate(
+      (widget) =>
+          widget is Container &&
+          widget.key is ValueKey<String> &&
+          (widget.key! as ValueKey<String>).value.startsWith('course-block-'),
+    );
+    final courseBlock = tester.widget<Container>(courseBlockFinder.first);
+    final courseDecoration = courseBlock.decoration! as BoxDecoration;
+    expect(courseDecoration.color!.a, closeTo(0.58, 0.01));
+    expect(courseDecoration.borderRadius, BorderRadius.circular(3));
+  });
+
+  testWidgets('hides a configured background in light mode', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      AppThemeController.storageKey: 'light',
+      AppThemeController.backgroundPathKey: 'app/background.png',
+    });
+    final controller = AppThemeController(
+      imageReader: (_) async => base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      ),
+    );
+    await controller.load();
+    await tester.pumpWidget(
+      AppThemeScope(
+        controller: controller,
+        child: MaterialApp(
+          home: SchedulePage(repository: _MemoryScheduleRepository()),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+
+    expect(controller.hasBackgroundImage, isTrue);
+    expect(controller.preference, BlackbookThemePreference.light);
+    expect(
+      tester.widget<Scaffold>(find.byType(Scaffold).first).backgroundColor,
+      const Color(0xFFFFFFFF),
+    );
+    final weekTitle = tester.widget<Container>(
+      find.byKey(const ValueKey<String>('week-title-background')),
+    );
+    final decoration = weekTitle.decoration! as BoxDecoration;
+    expect(decoration.color!.a, 1);
+  });
+
   testWidgets('chooses and persists a weekly conflict course', (tester) async {
     SharedPreferences.setMockInitialValues({});
     await tester.pumpWidget(
@@ -190,12 +280,51 @@ void main() {
     expect(find.text('小组件'), findsNothing);
     expect(find.text('清除导入'), findsNothing);
     expect(find.text('主题 自动'), findsOneWidget);
+    expect(find.text('背景设置'), findsOneWidget);
 
     await tester.tap(find.text('主题 自动'));
     await tester.pumpAndSettle();
 
     expect(themeController.preference, BlackbookThemePreference.light);
     expect(find.text('主题 亮色'), findsOneWidget);
+  });
+
+  testWidgets('opens custom background settings from the more dock', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final themeController = AppThemeController();
+    await themeController.load();
+    await tester.pumpWidget(
+      AppThemeScope(
+        controller: themeController,
+        child: MaterialApp(
+          home: SchedulePage(repository: _MemoryScheduleRepository()),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
+
+    await tester.tap(find.byIcon(Icons.more_vert));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('背景设置'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('背景设置'), findsOneWidget);
+    expect(find.text('选择图片'), findsOneWidget);
+    expect(find.text('图片透明度'), findsOneWidget);
+    expect(
+      tester
+          .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, '清空'))
+          .onPressed,
+      isNull,
+    );
+
+    await tester.drag(find.byType(ListView).last, const Offset(0, -520));
+    await tester.pumpAndSettle();
+    expect(find.text('遮罩颜色'), findsOneWidget);
+    expect(find.text('遮罩强度'), findsOneWidget);
   });
 
   testWidgets('opens hidden test dock from long pressing about', (

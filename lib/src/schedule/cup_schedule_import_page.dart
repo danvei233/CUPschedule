@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../account/cup_account_service.dart';
 import '../account/cup_api_client.dart';
 import '../account/cup_auth_failure_handler.dart';
+import '../app_background.dart';
 import '../app_palette.dart';
 import '../common/stable_fingerprint.dart';
 import 'schedule_models.dart';
@@ -46,7 +47,7 @@ class _CupScheduleImportPageState extends State<CupScheduleImportPage> {
     final preview = _previewBundle;
     final palette = blackbookPalette(context);
     return Scaffold(
-      backgroundColor: palette.pageBackground,
+      backgroundColor: appPageBackgroundColor(context, palette.pageBackground),
       floatingActionButton: preview == null
           ? null
           : FloatingActionButton.extended(

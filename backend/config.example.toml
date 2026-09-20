@@ -1,0 +1,6 @@
+# Copy to config.toml, or start the server to generate it automatically.
+# An empty api_key is replaced with a random key on startup and saved to disk.
+api_key = ""
+listen = "127.0.0.1:8090"
+data_dir = "data"
+# Windows absolute paths may use single quotes: data_dir = 'D:\blackbook-data'

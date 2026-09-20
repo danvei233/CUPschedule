@@ -43,6 +43,19 @@ flutter {
     source = "../.."
 }
 
+// Keep cloud-sync sidecars in the working tree, but never feed them to AAPT.
+val recordingFilteredResources = tasks.register<Sync>("filterMainResourceSidecars") {
+    from("src/main/res")
+    exclude("**/*.baiduyun.uploading.cfg")
+    into(layout.buildDirectory.dir("filtered-main-res"))
+}
+android.sourceSets.getByName("main").res.setSrcDirs(
+    listOf(layout.buildDirectory.dir("filtered-main-res")),
+)
+tasks.named("preBuild") { dependsOn(recordingFilteredResources) }
+
 dependencies {
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
     implementation("androidx.core:core-ktx:1.16.0")
 }

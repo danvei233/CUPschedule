@@ -14,10 +14,12 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
+    private var recorderBridge: cn.blackbook.blackbook.recording.RecorderBridge? = null
     private var pendingNotificationResult: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        recorderBridge = cn.blackbook.blackbook.recording.RecorderBridge(this, flutterEngine.dartExecutor.binaryMessenger)
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "blackbook/today_classes_widget",
@@ -84,6 +86,7 @@ class MainActivity : FlutterActivity() {
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        recorderBridge?.permissionResult(requestCode, grantResults)
         if (requestCode != notificationPermissionRequest) {
             return
         }
@@ -137,5 +140,10 @@ class MainActivity : FlutterActivity() {
 
     companion object {
         private const val notificationPermissionRequest = 3317
+    }
+
+    override fun onDestroy() {
+        recorderBridge?.dispose()
+        super.onDestroy()
     }
 }

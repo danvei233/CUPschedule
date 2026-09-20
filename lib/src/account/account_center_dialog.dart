@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app_palette.dart';
+import '../app_background.dart';
 import 'account_store.dart';
 import 'cup_account_service.dart';
 
@@ -180,7 +181,7 @@ class _CupLoginPageState extends State<CupLoginPage> {
   Widget build(BuildContext context) {
     final palette = blackbookPalette(context);
     return Scaffold(
-      backgroundColor: palette.pageBackground,
+      backgroundColor: appPageBackgroundColor(context, palette.pageBackground),
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(

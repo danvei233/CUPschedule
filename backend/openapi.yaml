@@ -1,0 +1,259 @@
+openapi: 3.0.3
+info:
+  title: Blackbook Classroom API
+  version: 1.0.0
+  description: All operations require X-API-Key, including audio and WebSocket upgrades. Times are RFC3339; audio is mono PCM16 at 16000 Hz.
+servers:
+  - url: http://localhost:8090/api/v1
+security:
+  - ApiKey: []
+components:
+  securitySchemes:
+    ApiKey: {type: apiKey, in: header, name: X-API-Key}
+  parameters:
+    id: {name: id, in: path, required: true, schema: {type: string}}
+  responses:
+    OK:
+      description: Successful result
+      content:
+        application/json:
+          schema: {}
+    Error:
+      description: Validation or state error
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error]
+            properties: {error: {type: string}}
+  schemas:
+    Course:
+      type: object
+      required: [name]
+      properties:
+        id: {type: string, format: uuid}
+        semester_id: {type: string}
+        name: {type: string, maxLength: 160}
+        teachers: {type: string}
+        auto_record: {type: boolean}
+        prompt: {type: string}
+    Recording:
+      type: object
+      required: [course_id]
+      properties:
+        id: {type: string, format: uuid}
+        course_id: {type: string}
+        title: {type: string}
+        started_at: {type: string, format: date-time}
+        status: {type: string, readOnly: true}
+        samples: {type: integer, format: int64, readOnly: true}
+        total_chunks: {type: integer, readOnly: true}
+        interrupted: {type: boolean}
+        capture_error: {type: string}
+        gaps: {type: string, description: JSON-encoded pause intervals}
+    Chunk:
+      type: object
+      required: [seq, sha256, data]
+      properties:
+        seq: {type: integer, minimum: 0, maximum: 86400}
+        sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+        data: {type: string, format: byte, description: Raw PCM, not WAV. Maximum 320000 bytes decoded.}
+    Note:
+      type: object
+      required: [recording_id, markdown]
+      properties:
+        id: {type: string, readOnly: true}
+        recording_id: {type: string}
+        markdown: {type: string}
+        edited: {type: boolean, readOnly: true}
+        created_at: {type: string, format: date-time, readOnly: true}
+    Settings:
+      type: object
+      properties:
+        audio_url: {type: string, format: uri}
+        audio_key: {type: string, writeOnly: true}
+        openai_url: {type: string, format: uri}
+        openai_key: {type: string, writeOnly: true, description: Omit to keep; empty string clears.}
+        protocol: {type: string, enum: [chat, responses]}
+        model: {type: string}
+        reasoning: {type: string, description: Empty omits reasoning parameter.}
+        input_budget: {type: integer, minimum: 1000, maximum: 200000}
+        gpu_limit: {type: integer, minimum: 1, maximum: 8}
+        note_limit: {type: integer, minimum: 1, maximum: 32}
+        transcription_prompt: {type: string}
+        note_prompt: {type: string}
+paths:
+  /health:
+    get:
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+  /semesters:
+    get:
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+  /courses:
+    get:
+      description: Returns course objects wrapped with recording_count and duration_seconds.
+      parameters: [{name: semester_id, in: query, schema: {type: string}}]
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+    post:
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/Course'}}}
+      responses: {'200': {$ref: '#/components/responses/OK'}, '400': {$ref: '#/components/responses/Error'}}
+  /courses/{id}:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    patch:
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/Course'}}}
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+    delete:
+      description: Without cascade=true returns 409 with recording_count. misc cannot be deleted.
+      parameters: [{name: cascade, in: query, schema: {type: boolean}}]
+      responses: {'200': {$ref: '#/components/responses/OK'}, '409': {$ref: '#/components/responses/Error'}}
+  /schedule/sync:
+    post:
+      description: Idempotent sync. Existing prompts and auto_record flags are preserved. Deleted courses remain tombstoned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [semester, courses, occurrences]
+              properties:
+                semester:
+                  type: object
+                  required: [id, name, start, end]
+                  properties: {id: {type: string}, name: {type: string}, start: {type: string}, end: {type: string}}
+                courses: {type: array, items: {$ref: '#/components/schemas/Course'}}
+                occurrences:
+                  type: array
+                  items:
+                    type: object
+                    required: [id, course_id, start, end]
+                    properties: {id: {type: string}, course_id: {type: string}, start: {type: string, format: date-time}, end: {type: string, format: date-time}}
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+  /recordings:
+    get:
+      parameters: [{name: course_id, in: query, schema: {type: string}}]
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+    post:
+      description: A client UUID provides idempotency, including offline recordings.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/Recording'}}}
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+  /recordings/{id}:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    get:
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+    patch:
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/Recording'}}}
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+    delete:
+      description: Tombstones immediately; cancels tasks and schedules retryable file cleanup.
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+  /recordings/{id}/chunks:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    get:
+      description: Returns persisted sequence numbers and checksums; client compares with local manifest.
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+    post:
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/Chunk'}}}
+      responses: {'200': {$ref: '#/components/responses/OK'}, '400': {$ref: '#/components/responses/Error'}}
+  /recordings/{id}/complete:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    post:
+      description: Requires every chunk from zero to total_chunks-1. Finalizes WAV and queues transcription atomically.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [total_chunks], properties: {total_chunks: {type: integer, minimum: 1}}}}}
+      responses: {'200': {$ref: '#/components/responses/OK'}, '400': {$ref: '#/components/responses/Error'}}
+  /recordings/{id}/audio:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    get:
+      parameters: [{name: Range, in: header, schema: {type: string, example: 'bytes=44-31999'}}]
+      responses:
+        '200': {description: WAV, content: {audio/wav: {schema: {type: string, format: binary}}}}
+        '206': {description: Partial WAV}
+        '416': {description: Unsatisfiable byte range}
+    head:
+      responses: {'200': {description: WAV headers}}
+    put:
+      description: Canonical 44-byte-header WAV, mono PCM16 at 16 kHz. Upload and finish an existing session.
+      requestBody:
+        required: true
+        content: {audio/wav: {schema: {type: string, format: binary}}}
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+  /recordings/{id}/stream:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    get:
+      description: WebSocket upgrade. First message resume; client sends Chunk JSON; server sends ack/error/segment/heartbeat. A segment with replace_from removes the revised suffix. Reconnect with cursor for event replay.
+      parameters: [{name: cursor, in: query, schema: {type: integer, format: int64, default: 0}}]
+      responses: {'101': {description: Switching protocols}}
+  /recordings/{id}/transcript:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    get:
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+  /recordings/{id}/transcript/{segment}:
+    parameters: [{$ref: '#/components/parameters/id'}, {name: segment, in: path, required: true, schema: {type: string}}]
+    patch:
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, properties: {text: {type: string}, speaker: {type: string}}}}}
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+  /notes:
+    get:
+      parameters: [{name: recording_id, in: query, schema: {type: string}}]
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+    post:
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/Note'}}}
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+  /notes/{id}:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    patch:
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, properties: {markdown: {type: string}}}}}
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+    delete:
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+  /tasks:
+    get:
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+    post:
+      description: Creates a note-generation task (default) or a full retranscription task. Retranscription requires archived audio, rejects active duplicate tasks, and replaces transcript corrections only after inference succeeds. Existing note versions are retained.
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [recording_id], properties: {recording_id: {type: string}, kind: {type: string, enum: [note, transcribe], default: note}}}}}
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+  /tasks/{id}/{action}:
+    parameters: [{$ref: '#/components/parameters/id'}, {name: action, in: path, required: true, schema: {type: string, enum: [start, stop, retry]}}]
+    post:
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+  /settings:
+    get:
+      description: Returns settings plus has_openai_key and has_audio_key booleans; never returns secrets.
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+    patch:
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/Settings'}}}
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+  /settings/test:
+    post:
+      description: Sends a small request to the configured OpenAI endpoint.
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+  /audio-service:
+    get:
+      responses: {'200': {$ref: '#/components/responses/OK'}}
+  /audio-service/{action}:
+    parameters: [{name: action, in: path, required: true, schema: {type: string, enum: [load, unload, reload]}}]
+    post:
+      responses: {'200': {$ref: '#/components/responses/OK'}}

@@ -9,7 +9,9 @@ allprojects {
 }
 
 val newBuildDir: Directory =
-    rootProject.layout.buildDirectory
+    providers.environmentVariable("BLACKBOOK_BUILD_DIR").orNull?.let {
+        rootProject.layout.projectDirectory.dir(it)
+    } ?: rootProject.layout.buildDirectory
         .dir("../../build")
         .get()
 rootProject.layout.buildDirectory.value(newBuildDir)

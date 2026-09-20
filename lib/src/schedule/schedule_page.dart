@@ -9,11 +9,15 @@ import '../account/account_center_dialog.dart';
 import '../account/cup_account_service.dart';
 import '../account/cup_api_client.dart';
 import '../account/cup_auth_failure_handler.dart';
+import '../app_background.dart';
+import '../app_background_settings_page.dart';
 import '../app_palette.dart';
 import '../app_theme_controller.dart';
 import 'cup_schedule_import_page.dart';
 import 'schedule_models.dart';
 import 'schedule_repository.dart';
+import '../recording/recording_controller.dart';
+import '../recording/recording_center.dart';
 
 Color _accentBackgroundFor(BuildContext context, _CourseAccent accent) {
   if (Theme.of(context).brightness != Brightness.dark) {
@@ -33,6 +37,10 @@ Color _accentForegroundFor(BuildContext context, _CourseAccent accent) {
     accent.foreground.withValues(alpha: 0.36),
     Colors.white,
   );
+}
+
+bool _hasCustomBackground(BuildContext context) {
+  return appHasVisibleBackground(context);
 }
 
 class SchedulePage extends StatefulWidget {
@@ -76,12 +84,15 @@ class _SchedulePageState extends State<SchedulePage> {
   @override
   void initState() {
     super.initState();
+    RecordingController.instance.addListener(_recordingChanged);
+    unawaited(RecordingController.instance.load());
     _selectedWeekNotifier = ValueNotifier<int>(1);
     _bundleFuture = _loadBundle();
   }
 
   @override
   void dispose() {
+    RecordingController.instance.removeListener(_recordingChanged);
     _weekLayoutWarmupTimer?.cancel();
     _bundlePersistTimer?.cancel();
     final pendingPersistBundle = _pendingPersistBundle;
@@ -92,6 +103,8 @@ class _SchedulePageState extends State<SchedulePage> {
     _selectedWeekNotifier.dispose();
     super.dispose();
   }
+
+  void _recordingChanged() { if (mounted) setState(() {}); }
 
   Future<ScheduleBundle> _loadBundle() async {
     final bundle = await widget.repository.load();
@@ -124,7 +137,10 @@ class _SchedulePageState extends State<SchedulePage> {
         if (snapshot.connectionState != ConnectionState.done) {
           final palette = blackbookPalette(context);
           return Scaffold(
-            backgroundColor: palette.pageBackground,
+            backgroundColor: appPageBackgroundColor(
+              context,
+              palette.pageBackground,
+            ),
             body: const Center(child: CircularProgressIndicator()),
           );
         }
@@ -139,7 +155,10 @@ class _SchedulePageState extends State<SchedulePage> {
             });
           }
           return Scaffold(
-            backgroundColor: palette.pageBackground,
+            backgroundColor: appPageBackgroundColor(
+              context,
+              palette.pageBackground,
+            ),
             body: SafeArea(
               child: Center(
                 child: Column(
@@ -174,7 +193,16 @@ class _SchedulePageState extends State<SchedulePage> {
         final palette = blackbookPalette(context);
 
         return Scaffold(
-          backgroundColor: palette.pageBackground,
+          floatingActionButton: RecordingController.instance.enabled && RecordingController.instance.supported
+              ? FloatingActionButton(tooltip: '课堂记录', onPressed: () async {
+                  await Navigator.push(context, MaterialPageRoute<void>(builder: (_) => const RecordingCenter()));
+                  if (mounted) setState(() { _bundleFuture = _loadBundle(); });
+                }, child: const Icon(Icons.mic_none))
+              : null,
+          backgroundColor: appPageBackgroundColor(
+            context,
+            palette.pageBackground,
+          ),
           body: SafeArea(
             child: Column(
               children: [
@@ -634,6 +662,14 @@ class _SchedulePageState extends State<SchedulePage> {
         onImport: _openImporter,
         onAbout: () => _openAboutDock(pageContext),
         onTests: () => _openTestDock(pageContext),
+        onBackground: themeController == null
+            ? null
+            : () => Navigator.of(pageContext).push(
+                MaterialPageRoute(
+                  builder: (_) =>
+                      AppBackgroundSettingsPage(controller: themeController),
+                ),
+              ),
         themePreference:
             themeController?.preference ?? BlackbookThemePreference.system,
         onThemePreferenceChanged: (preference) {
@@ -1427,110 +1463,126 @@ class _ScheduleHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final today = semester.dateFor(weekIndex: selectedWeek, weekday: 7);
     final palette = blackbookPalette(context);
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 8, 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: GestureDetector(
-              onTap: onToday,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${today.month}/${today.day}/${today.year % 100}',
-                    style: Theme.of(context).textTheme.displaySmall?.copyWith(
-                      color: palette.ink,
-                      fontSize: 31,
-                      fontWeight: FontWeight.w800,
-                      height: 0.98,
-                      letterSpacing: 0,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Row(
-                    children: [
-                      Flexible(
-                        flex: 0,
-                        child: Text(
-                          '第$selectedWeek周',
-                          maxLines: 1,
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(
-                                color: palette.subtle,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
-                                letterSpacing: 0,
-                              ),
-                        ),
+    final hasBackground = _hasCustomBackground(context);
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final headerInk = hasBackground
+        ? (dark ? Colors.white : const Color(0xFF111827))
+        : palette.ink;
+    final headerSecondary = hasBackground
+        ? headerInk.withValues(alpha: dark ? 0.76 : 0.72)
+        : palette.subtle;
+    return ColoredBox(
+      key: const ValueKey<String>('schedule-header-background'),
+      color: hasBackground
+          ? (dark ? Colors.black : Colors.white).withValues(
+              alpha: dark ? 0.06 : 0.24,
+            )
+          : Colors.transparent,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 8, 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: GestureDetector(
+                onTap: onToday,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${today.month}/${today.day}/${today.year % 100}',
+                      style: Theme.of(context).textTheme.displaySmall?.copyWith(
+                        color: headerInk,
+                        fontSize: 31,
+                        fontWeight: FontWeight.w800,
+                        height: 0.98,
+                        letterSpacing: 0,
                       ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTap: onSelectSemester,
-                          child: Align(
-                            alignment: Alignment.centerLeft,
-                            child: FittedBox(
-                              fit: BoxFit.scaleDown,
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Flexible(
+                          flex: 0,
+                          child: Text(
+                            '第$selectedWeek周',
+                            maxLines: 1,
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(
+                                  color: headerSecondary,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w500,
+                                  letterSpacing: 0,
+                                ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: onSelectSemester,
+                            child: Align(
                               alignment: Alignment.centerLeft,
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    _semesterDisplayName(semester.name),
-                                    maxLines: 1,
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .titleMedium
-                                        ?.copyWith(
-                                          color: palette.subtle,
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w500,
-                                          letterSpacing: 0,
-                                        ),
-                                  ),
-                                  const SizedBox(width: 2),
-                                  Icon(
-                                    Icons.keyboard_arrow_down,
-                                    size: 15,
-                                    color: palette.subtle,
-                                  ),
-                                ],
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      _semesterDisplayName(semester.name),
+                                      maxLines: 1,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleMedium
+                                          ?.copyWith(
+                                            color: headerSecondary,
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w500,
+                                            letterSpacing: 0,
+                                          ),
+                                    ),
+                                    const SizedBox(width: 2),
+                                    Icon(
+                                      Icons.keyboard_arrow_down,
+                                      size: 15,
+                                      color: headerSecondary,
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                ],
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-          _HeaderIconButton(
-            icon: Icons.sync,
-            tooltip: '同步当前课表',
-            onPressed: onSync,
-          ),
-          _HeaderIconButton(
-            icon: Icons.add,
-            tooltip: '新增课程',
-            onPressed: onAddCourse,
-          ),
-          _HeaderIconButton(
-            icon: Icons.file_download_outlined,
-            tooltip: '登录并导入课表',
-            onPressed: onImport,
-          ),
-          _HeaderIconButton(
-            icon: Icons.more_vert,
-            tooltip: '更多',
-            iconSize: 31,
-            onPressed: onOpenMore,
-          ),
-        ],
+            _HeaderIconButton(
+              icon: Icons.sync,
+              tooltip: '同步当前课表',
+              onPressed: onSync,
+            ),
+            _HeaderIconButton(
+              icon: Icons.add,
+              tooltip: '新增课程',
+              onPressed: onAddCourse,
+            ),
+            _HeaderIconButton(
+              icon: Icons.file_download_outlined,
+              tooltip: '登录并导入课表',
+              onPressed: onImport,
+            ),
+            _HeaderIconButton(
+              icon: Icons.more_vert,
+              tooltip: '更多',
+              iconSize: 31,
+              onPressed: onOpenMore,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1739,6 +1791,7 @@ class _MoreDockSheet extends StatefulWidget {
     required this.onImport,
     required this.onAbout,
     required this.onTests,
+    required this.onBackground,
     required this.themePreference,
     required this.onThemePreferenceChanged,
   });
@@ -1754,6 +1807,7 @@ class _MoreDockSheet extends StatefulWidget {
   final VoidCallback onImport;
   final VoidCallback onAbout;
   final VoidCallback onTests;
+  final VoidCallback? onBackground;
   final BlackbookThemePreference themePreference;
   final ValueChanged<BlackbookThemePreference> onThemePreferenceChanged;
 
@@ -1937,6 +1991,13 @@ class _MoreDockSheetState extends State<_MoreDockSheet> {
                           icon: _themePreference.icon,
                           label: '主题 ${_themePreference.label}',
                           onTap: _cycleTheme,
+                        ),
+                        _DockAction(
+                          icon: Icons.wallpaper_outlined,
+                          label: '背景设置',
+                          enabled: widget.onBackground != null,
+                          onTap: () =>
+                              _closeWithAction(widget.onBackground ?? () {}),
                         ),
                       ],
                     ),
@@ -2390,6 +2451,16 @@ class _TestDockSheetState extends State<_TestDockSheet> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _DockHeader(title: '测试面板', icon: Icons.science_outlined),
+          ListenableBuilder(listenable: RecordingController.instance, builder: (context, _) => SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('课堂录音与笔记扩展'),
+            subtitle: Text(RecordingController.instance.supported ? '启用后在主页显示功能中心入口' : '首版完整支持 Android'),
+            value: RecordingController.instance.enabled,
+            onChanged: RecordingController.instance.supported ? (value) async {
+              try { await RecordingController.instance.setEnabled(value); }
+              catch (e) { if (mounted) setState(() { _message = '$e'; }); }
+            } : null,
+          )),
           const SizedBox(height: 12),
           _DockListAction(
             icon: Icons.notifications_active_outlined,
@@ -3072,11 +3143,22 @@ class _WeekTitleRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = blackbookPalette(context);
+    final hasBackground = _hasCustomBackground(context);
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return Container(
+      key: const ValueKey<String>('week-title-background'),
       decoration: BoxDecoration(
-        color: palette.pageBackground,
+        color: hasBackground
+            ? (dark ? Colors.black : Colors.white).withValues(
+                alpha: dark ? 0.16 : 0.24,
+              )
+            : palette.pageBackground,
         border: Border(
-          top: BorderSide(color: palette.divider.withValues(alpha: 0.55)),
+          top: BorderSide(
+            color: hasBackground
+                ? palette.ink.withValues(alpha: 0.10)
+                : palette.divider.withValues(alpha: 0.55),
+          ),
         ),
       ),
       padding: const EdgeInsets.fromLTRB(38, 5, 6, 5),
@@ -3118,15 +3200,25 @@ class _WeekTitleCell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = blackbookPalette(context);
-    final textColor = isToday ? palette.primary : palette.subtle;
+    final hasBackground = _hasCustomBackground(context);
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final textColor = isToday
+        ? palette.primary
+        : hasBackground
+        ? (dark ? Colors.white : const Color(0xFF111827)).withValues(
+            alpha: 0.78,
+          )
+        : palette.subtle;
     return Center(
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
         width: isToday ? 42 : null,
         height: isToday ? 42 : null,
         decoration: BoxDecoration(
-          color: isToday ? palette.primarySoft : Colors.transparent,
-          borderRadius: BorderRadius.circular(10),
+          color: isToday
+              ? palette.primarySoft.withValues(alpha: hasBackground ? 0.62 : 1)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
           boxShadow: isToday
               ? [
                   BoxShadow(
@@ -3561,6 +3653,14 @@ class _ScheduleUnitLabel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = blackbookPalette(context);
+    final hasBackground = _hasCustomBackground(context);
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final railInk = hasBackground
+        ? (dark ? Colors.white : const Color(0xFF111827))
+        : palette.ink;
+    final railSubtle = hasBackground
+        ? railInk.withValues(alpha: 0.70)
+        : palette.subtle;
     return Padding(
       padding: const EdgeInsets.only(left: 2, right: 6),
       child: Column(
@@ -3570,7 +3670,7 @@ class _ScheduleUnitLabel extends StatelessWidget {
           Text(
             '$unit',
             style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              color: palette.ink,
+              color: railInk,
               fontSize: 13,
               fontWeight: FontWeight.w800,
               height: 1,
@@ -3583,7 +3683,7 @@ class _ScheduleUnitLabel extends StatelessWidget {
               courseUnit!.startTimeText,
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: palette.subtle,
+                color: railSubtle,
                 fontSize: 9,
                 fontWeight: FontWeight.w500,
                 height: 1,
@@ -3594,7 +3694,7 @@ class _ScheduleUnitLabel extends StatelessWidget {
               courseUnit!.endTimeText,
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: palette.subtle,
+                color: railSubtle,
                 fontSize: 9,
                 fontWeight: FontWeight.w500,
                 height: 1,
@@ -3685,14 +3785,29 @@ class _ScheduleCourseBlock extends StatelessWidget {
     final iconAccent = _courseIconAccentFor(activity);
     final palette = blackbookPalette(context);
     final dark = Theme.of(context).brightness == Brightness.dark;
+    final hasBackground = _hasCustomBackground(context);
+    final courseOpacity =
+        AppThemeScope.maybeOf(context)?.background.courseCardOpacity ?? 0.58;
     final baseBackground = _accentBackgroundFor(context, colorAccent);
-    final background = group.outOfWeek
+    final lightGlassAlpha = (courseOpacity * 0.55).clamp(0.12, 0.52);
+    final background = hasBackground
+        ? (dark ? baseBackground : colorAccent.foreground).withValues(
+            alpha: group.outOfWeek
+                ? (dark ? courseOpacity * 0.50 : lightGlassAlpha * 0.52)
+                : (dark ? courseOpacity : lightGlassAlpha),
+          )
+        : group.outOfWeek
         ? Color.alphaBlend(
             baseBackground.withValues(alpha: dark ? 0.34 : 0.28),
             palette.pageBackground,
           )
         : baseBackground;
-    final textBase = _accentForegroundFor(context, colorAccent);
+    final textBase = hasBackground && !dark
+        ? Color.alphaBlend(
+            colorAccent.foreground.withValues(alpha: 0.82),
+            Colors.black,
+          )
+        : _accentForegroundFor(context, colorAccent);
     final textColor = textBase.withValues(
       alpha: group.outOfWeek ? (dark ? 0.32 : 0.22) : 0.95,
     );
@@ -3700,16 +3815,26 @@ class _ScheduleCourseBlock extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       onTap: () => _showCourseDetails(context, activity),
       child: Container(
+        key: ValueKey<String>(
+          'course-block-${scheduleActivityStorageKey(activity)}',
+        ),
         clipBehavior: Clip.hardEdge,
         decoration: BoxDecoration(
           color: background,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: palette.courseBorder, width: 0.55),
+          borderRadius: BorderRadius.circular(3),
+          border: Border.all(
+            color: hasBackground
+                ? palette.ink.withValues(alpha: dark ? 0.18 : 0.14)
+                : palette.courseBorder,
+            width: hasBackground ? 0.45 : 0.55,
+          ),
           boxShadow: [
             BoxShadow(
-              color: palette.courseShadow,
-              blurRadius: 8,
-              offset: const Offset(0, 2),
+              color: hasBackground
+                  ? palette.courseShadow.withValues(alpha: 0.34)
+                  : palette.courseShadow,
+              blurRadius: hasBackground ? 3 : 8,
+              offset: Offset(0, hasBackground ? 1 : 2),
             ),
           ],
         ),
@@ -4312,7 +4437,7 @@ class _CourseEditorPageState extends State<_CourseEditorPage> {
   Widget build(BuildContext context) {
     final palette = blackbookPalette(context);
     return Scaffold(
-      backgroundColor: palette.pageBackground,
+      backgroundColor: appPageBackgroundColor(context, palette.pageBackground),
       body: SafeArea(
         child: Column(
           children: [

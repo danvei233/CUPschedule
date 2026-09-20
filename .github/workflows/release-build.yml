@@ -147,15 +147,15 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -d "ohos" ]; then
-            cat > dist/harmonyos/README.txt <<'EOF'
-HarmonyOS/OpenHarmony build skipped.
-
-This repository does not contain an ohos/ project yet. Add the
-OpenHarmony Flutter project files and configure OHOS SDK/toolchain,
-then replace this CI step with:
-
-  flutter build hap --release --target-platform ohos-arm64
-EOF
+            printf '%s\n' \
+              'HarmonyOS/OpenHarmony build skipped.' \
+              '' \
+              'This repository does not contain an ohos/ project yet. Add the' \
+              'OpenHarmony Flutter project files and configure OHOS SDK/toolchain,' \
+              'then replace this CI step with:' \
+              '' \
+              '  flutter build hap --release --target-platform ohos-arm64' \
+              > dist/harmonyos/README.txt
             exit 0
           fi
 
@@ -168,14 +168,14 @@ EOF
           fi
 
           if [ -z "${OHOS_SDK_HOME:-}" ] && [ -z "${DEVECO_SDK_HOME:-}" ]; then
-            cat > dist/harmonyos/README.txt <<'EOF'
-HarmonyOS/OpenHarmony build skipped.
-
-The ohos/ project exists, but OHOS SDK is not configured. Set
-OHOS_SDK_HOME or DEVECO_SDK_HOME on the runner, or provide a
-repository secret named OHOS_SDK_ARCHIVE_URL that points to a
-downloadable SDK archive.
-EOF
+            printf '%s\n' \
+              'HarmonyOS/OpenHarmony build skipped.' \
+              '' \
+              'The ohos/ project exists, but OHOS SDK is not configured. Set' \
+              'OHOS_SDK_HOME or DEVECO_SDK_HOME on the runner, or provide a' \
+              'repository secret named OHOS_SDK_ARCHIVE_URL that points to a' \
+              'downloadable SDK archive.' \
+              > dist/harmonyos/README.txt
             exit 0
           fi
 
@@ -183,12 +183,12 @@ EOF
           export PATH="${RUNNER_TEMP}/ohos_flutter/bin:${PATH}"
 
           if ! flutter build hap --help >/dev/null 2>&1; then
-            cat > dist/harmonyos/README.txt <<'EOF'
-HarmonyOS/OpenHarmony build skipped.
-
-The configured OpenHarmony Flutter SDK does not provide
-`flutter build hap`. Check OHOS_FLUTTER_GIT and OHOS_FLUTTER_REF.
-EOF
+            printf '%s\n' \
+              'HarmonyOS/OpenHarmony build skipped.' \
+              '' \
+              'The configured OpenHarmony Flutter SDK does not provide' \
+              '`flutter build hap`. Check OHOS_FLUTTER_GIT and OHOS_FLUTTER_REF.' \
+              > dist/harmonyos/README.txt
             exit 0
           fi
 
